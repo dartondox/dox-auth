@@ -1,6 +1,6 @@
 <img src="https://raw.githubusercontent.com/dartondox/assets/main/dox-logo.png" width="70" />
 
-# This Package is still Work in progress
+# This package is still work in progress
 
 ## Dox Auth
 
