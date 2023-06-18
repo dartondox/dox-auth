@@ -41,14 +41,20 @@ String? token = await auth.attempt(credentials);
 User? user = auth.user<User>();
 ```
 
-4. Verify Logged In or Fetch User information
+4. Register `doxAuthMiddleware` in route
+
+```dart
+ Route.get('/auth/user', <dynamic>[doxAuthMiddleware, authController.user]);
+```
+
+5. Verify Logged In or Fetch User information
 
 ```dart
 Future<dynamic> fetchUser(DoxRequest req) async {
-    Auth? auth = req.auth;
-    if (auth?.isLoggedIn() == true) {
-      return auth?.user();
-    }
-    throw UnAuthorizedException();
+  Auth? auth = req.auth<Auth>();
+  if (auth?.isLoggedIn() == true) {
+    return auth?.user();
+  }
+  throw UnAuthorizedException();
 }
 ```
