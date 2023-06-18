@@ -1,7 +1,5 @@
 <img src="https://raw.githubusercontent.com/dartondox/assets/main/dox-logo.png" width="70" />
 
-# This package is still work in progress
-
 ## Dox Auth
 
 Dox Auth is an authentication package for dox framework. Currently it support JWT driver and support only with Dox Query Builder(ORM)
@@ -55,14 +53,42 @@ User? user = auth.user<User>();
 
 ```dart
 Future<dynamic> fetchUser(DoxRequest req) async {
-    Auth? auth = req.auth;
-    if (auth?.isLoggedIn() == true) {
-      return auth?.user();
-    }
-    throw UnAuthorizedException();
+  Auth? auth = req.auth<Auth>();
+  if (auth?.isLoggedIn() == true) {
+    return auth?.user();
+  }
+  throw UnAuthorizedException();
 }
 ```
 
+### Expired In
+
+```dart
+JwtDriver(
+  secret: SecretKey(Env.get('APP_KEY')),
+  expiresIn: Duration(hours: 5),
+),
+```
+
+### Issuer
+
+```dart
+JwtDriver(
+  secret: SecretKey(Env.get('APP_KEY')),
+  issuer: 'https://dartondox.dev',
+),
+```
+
+### Algorithm
+
+```dart
+JwtDriver(
+  secret: SecretKey(Env.get('APP_KEY')),
+  algorithm: JWTAlgorithm.HS256,
+),
+```
+
+*for more information about algorithm please visit [dart jsonwebstoken](https://pub.dev/packages/dart_jsonwebtoken)*
 
 ## Documentation
 
