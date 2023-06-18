@@ -1,39 +1,85 @@
-<!-- 
-This README describes the package. If you publish this package to pub.dev,
-this README's contents appear on the landing page for your package.
+<img src="https://raw.githubusercontent.com/dartondox/assets/main/dox-logo.png" width="70" />
 
-For information about how to write a good package README, see the guide for
-[writing package pages](https://dart.dev/guides/libraries/writing-package-pages). 
+# This Package is still Work in progress
 
-For general information about developing packages, see the Dart guide for
-[creating packages](https://dart.dev/guides/libraries/create-library-packages)
-and the Flutter guide for
-[developing packages and plugins](https://flutter.dev/developing-packages). 
--->
+## Dox Auth
 
-TODO: Put a short description of the package here that helps potential users
-know whether this package might be useful for them.
-
-## Features
-
-TODO: List what your package can do. Maybe include images, gifs, or videos.
-
-## Getting started
-
-TODO: List prerequisites and provide or point to information on how to
-start using the package.
+Dox Auth is an authentication package for dox framework. Currently it support JWT driver and support only with Dox Query Builder(ORM)
 
 ## Usage
 
-TODO: Include short and useful examples for package users. Add longer examples
-to `/example` folder. 
+1. Create auth config
 
 ```dart
-const like = 'sample';
+import 'package:dox_auth/dox_auth.dart';
+import 'package:dox_core/dox_core.dart';
+import 'package:poc_app/models/user/user.model.dart';
+
+class AuthConfig extends AuthConfigInterface {
+  @override
+  String get defaultGuard => 'web';
+
+  @override
+  Map<String, Guard> get guards => <String, Guard>{
+        'web': Guard(
+          driver: JwtDriver(
+            secret: SecretKey(Env.get('APP_KEY')),
+          ),
+          provider: Provider(
+            model: () => User(),
+          ),
+        ),
+      };
+}
 ```
 
-## Additional information
+2. Modify `bin/server.dart` to add auth config
 
-TODO: Tell users more about the package: where to find more information, how to 
-contribute to the package, how to file issues, what response they can expect 
-from the package authors, and more.
+```dart
+Dox dox = Dox();
+await dox.initialize(config);
+dox.setAuthConfig(AuthConfig());
+```
+
+3. Attempt Login
+
+```dart
+Map<String, dynamic> credentials = req.only(<String>['email', 'password']);
+
+Auth auth = Auth();
+String? token = await auth.attempt(credentials);
+User? user = auth.user<User>();
+```
+
+4. Verify Logged In or Fetch User information
+
+```dart
+Future<dynamic> fetchUser(DoxRequest req) async {
+    Auth? auth = req.auth;
+    if (auth?.isLoggedIn() == true) {
+      return auth?.user();
+    }
+    throw UnAuthorizedException();
+}
+```
+
+
+## Documentation
+
+For detailed information about the framework and its functionalities, refer to the [Dox Documentation](https://dartondox.dev).
+
+## Security Vulnerabilities
+
+Dox take the security of our framework seriously. If you identify any security vulnerabilities in our application, please notify us immediately by sending an email to support@dartondox.dev. We appreciate your responsible disclosure and will respond promptly to address and resolve any identified security issues. Your cooperation helps us maintain the integrity and safety of our software for all users.
+
+## Contributing
+
+We welcome contributions from the community! If you'd like to contribute to the Dox Auth, please fork the repo and PR to us.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+## Community
+
+<a href="https://discord.gg/pBfWrsvBSV"><img src="https://img.shields.io/badge/Discord-7289DA?style=for-the-badge&logo=discord&logoColor=white"></a>
