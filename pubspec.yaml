@@ -9,7 +9,7 @@ environment:
 dependencies:
   dart_jsonwebtoken: ^2.8.2
   dox_query_builder: ^1.1.13
-  dox_core: ^1.0.4
+  dox_core: ^1.0.5
 
 dev_dependencies:
   lints: ^2.0.0
