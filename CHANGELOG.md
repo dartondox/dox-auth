@@ -1,3 +1,8 @@
+## 3.0.0
+
+- The first stable release.
+- The package now lives in its own repo: [dartondox/dox-auth](https://github.com/dartondox/dox-auth). Nothing changes for users: same package name, same API.
+
 ## 3.0.0-rc.1
 
 - Breaking: `JwtAuthDriver` no longer signs with the `SecretKey` text as it is. The HMAC key is made from it with HKDF-SHA256 and the label `dox:jwt`. Existing tokens become invalid after this version. Users must log in again. `driver.signingKey` gives the key, for another service that checks the tokens.
