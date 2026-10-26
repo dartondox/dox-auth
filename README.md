@@ -3,10 +3,10 @@
 Login for Dox apps. It checks an email and a password. It gives back a JWT token for an API, or keeps the login in the session for web pages.
 
 [![pub package](https://img.shields.io/pub/v/dox_auth.svg)](https://pub.dev/packages/dox_auth)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/dartondox/dox/blob/main/LICENSE)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/dartondox/dox-auth/blob/main/LICENSE)
 
 Part of [Dox](https://dartondox.dev), a web backend framework for Dart, like Laravel.
-Source code: [github.com/dartondox/dox](https://github.com/dartondox/dox).
+Source code: [github.com/dartondox/dox-auth](https://github.com/dartondox/dox-auth).
 
 ## Install
 
@@ -142,4 +142,4 @@ return req;
 
 ## License
 
-MIT. See [LICENSE](https://github.com/dartondox/dox/blob/main/LICENSE).
+MIT. See [LICENSE](https://github.com/dartondox/dox-auth/blob/main/LICENSE).
