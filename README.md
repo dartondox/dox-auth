@@ -161,6 +161,17 @@ if (Auth.needsRehash(user.password)) {
 
 `Auth.hashCost(hash)` gives the cost of a hash. `Auth.needsRehash(hash, rounds: 12)` checks another cost.
 
+### Check a login with no request
+
+For code with no request, like a Socket.IO login:
+
+```dart
+User? user = await Auth(guard: 'api').userFromToken(token);   // a JWT, no `Bearer ` prefix
+User? user = await Auth(guard: 'web').userFromSession(session); // from SessionMiddleware().fromCookie(value)
+```
+
+`userFromToken` runs the same checks as a request with a `Bearer` header. A missing, bad, expired, revoked or changed token gives `null`.
+
 ## Custom guard (API key)
 
 You can check the user in your own way, like an API key in the header.

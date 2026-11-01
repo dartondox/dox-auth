@@ -181,12 +181,16 @@ class JwtAuthDriver extends AuthDriver {
   /// verify token and get model from provider
   /// and get user data
   @override
-  Future<Model<dynamic>?> verifyToken(IDoxRequest req, String guard) async {
+  Future<Model<dynamic>?> verifyToken(IDoxRequest req, String guard) {
+    return userFromToken(bearerToken(req), guard);
+  }
+
+  /// The user of [token], or null. Same checks as [verifyToken], with no
+  /// request (eg. for a socket). Pass the token with no `Bearer `
+  /// prefix. A null, bad, expired, revoked or changed token gives null.
+  Future<Model<dynamic>?> userFromToken(String? token, String guard) async {
     try {
       AuthProvider provider = AuthEngine().guard(guard).provider;
-
-      /// get token from header
-      String? token = bearerToken(req);
 
       /// if not token just return
       if (token == null) {
