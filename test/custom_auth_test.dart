@@ -24,11 +24,15 @@ class ApiKeyAuthDriver extends AuthDriver {
     Map<String, dynamic> credentials,
     String guard,
   ) async {
-    return null;
+    // the email is the key, like in verifyToken
+    Model<dynamic> model = AuthEngine().guard(guard).provider.model();
+    return await model.where('email', credentials['key']).getFirst();
   }
 
   @override
-  String? createToken(Map<String, dynamic>? userPayload, String guard) => null;
+  String? createToken(Map<String, dynamic>? userPayload, String guard) {
+    return 'key-for-${userPayload?['email']}';
+  }
 }
 
 /// Own middleware that sets the user with `Auth().setUser`.
@@ -97,6 +101,17 @@ void main() {
 
     TestResponse bad = await client.withToken('nope').get('/key');
     expect(bad.status, 401);
+  });
+
+  test('Auth().attempt and login use the custom driver', () async {
+    expect(
+      await Auth().attempt(<String, dynamic>{'key': 'a@dox.dev'}),
+      'key-for-a@dox.dev',
+    );
+    Auth wrong = Auth();
+    expect(await wrong.attempt(<String, dynamic>{'key': 'nope'}), isNull);
+    expect(wrong.isLoggedIn(), isFalse);
+    expect(Auth().login(users[1]!), 'key-for-a@dox.dev');
   });
 
   test('Auth().setUser in own middleware sets req.auth', () async {

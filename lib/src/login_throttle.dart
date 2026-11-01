@@ -27,6 +27,10 @@ class LoginThrottledException extends TooManyRequestsException {
 ///
 /// The counts live in the app cache (`Dox().cache`). Use a shared store
 /// like `redis` when you run many isolates or servers.
+///
+/// Known limit: the limit is checked before a failed try is counted, so
+/// parallel tries can all pass the check and go past [maxAttempts]. Put
+/// `RateLimit` on the login route too, to stop fast parallel guessing.
 // ponytail: fixed window from the first failure, like RateLimit of dox_core
 class LoginThrottle {
   /// failed logins allowed in one [decay] window
@@ -89,7 +93,8 @@ class LoginThrottle {
   /// Counts one failed login for [key]. The first failure starts the
   /// window of [decay]. Later failures keep the same end.
   // ponytail: read then write, so parallel failures can lose a count.
-  // An atomic store op would close it.
+  // An atomic store op (increment) would close it, but the stored value
+  // is `hits|until`, so that needs a new key format.
   Future<void> hit(String key) async {
     int now = DateTime.now().millisecondsSinceEpoch;
     (int, int)? count = await _read(key);

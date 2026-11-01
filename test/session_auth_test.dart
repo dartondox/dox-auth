@@ -31,6 +31,11 @@ class WebRouter extends Router {
       AuthMiddleware(redirectTo: '/login'),
       (DoxRequest req) => 'page',
     ]);
+    Route.post('note', (DoxRequest req) {
+      req.session.put('note', 'hi');
+      return 'ok';
+    });
+    Route.get('note', (DoxRequest req) => req.session.get('note') ?? 'none');
     Route.get('jwt', (DoxRequest req) {
       Auth(guard: 'api').logout(req);
       return 'no';
@@ -60,6 +65,36 @@ class Browser {
   }
 }
 
+/// The same login routes, but with no SessionMiddleware.
+/// They answer with the error message, so the test can read it.
+class NoSessionRouter extends Router {
+  @override
+  String get prefix => 'bare';
+
+  @override
+  void register() {
+    Route.post('login', (DoxRequest req) async {
+      try {
+        bool ok = await Auth().attemptSession(
+          req,
+          req.only(<String>['email', 'password']),
+        );
+        return '$ok';
+      } on StateError catch (error) {
+        return error.message;
+      }
+    });
+    Route.post('logout', (DoxRequest req) {
+      try {
+        Auth().logout(req);
+        return 'no error';
+      } on StateError catch (error) {
+        return error.message;
+      }
+    });
+  }
+}
+
 void main() {
   late DoxTestClient client;
 
@@ -83,7 +118,7 @@ void main() {
     client = await DoxTestClient.start(
       AppConfig(
         appKey: secret,
-        routers: <Router>[WebRouter()],
+        routers: <Router>[WebRouter(), NoSessionRouter()],
         // memory, so the login throttle counts do not stay on disk
         cache: const CacheConfig(
           defaultStore: 'memory',
@@ -110,6 +145,28 @@ void main() {
     expect(login.body, 'in');
     expect((await browser.get('/me')).body, 'a@dox.dev');
 
+    expect((await browser.post('/logout')).body, 'out');
+    expect((await browser.get('/me')).status, 401);
+  });
+
+  test('logout removes all session data and gives a new session', () async {
+    Browser browser = Browser(client);
+    await browser.post('/login', <String, dynamic>{
+      'email': 'a@dox.dev',
+      'password': 'secret',
+    });
+    await browser.post('/note');
+    expect((await browser.get('/note')).body, 'hi');
+    Map<String, String> before = Map<String, String>.of(browser.cookies);
+
+    await browser.post('/logout');
+    expect((await browser.get('/me')).status, 401);
+    expect((await browser.get('/note')).body, 'none');
+    expect(browser.cookies, isNot(equals(before)));
+  });
+
+  test('logout with no login is fine', () async {
+    Browser browser = Browser(client);
     expect((await browser.post('/logout')).body, 'out');
     expect((await browser.get('/me')).status, 401);
   });
@@ -143,6 +200,25 @@ void main() {
     expect(res.status, 302);
     expect(res.header('location'), '/login');
   });
+
+  test(
+    'without SessionMiddleware, a right password gives a clear error',
+    () async {
+      TestResponse ok = await client.post(
+        '/bare/login',
+        body: <String, dynamic>{'email': 'a@dox.dev', 'password': 'secret'},
+      );
+      expect(ok.body, contains('Add SessionMiddleware()'));
+      // a wrong password gives false, like in 3.0.2
+      TestResponse wrong = await client.post(
+        '/bare/login',
+        body: <String, dynamic>{'email': 'a@dox.dev', 'password': 'nope'},
+      );
+      expect(wrong.body, 'false');
+      TestResponse out = await client.post('/bare/logout');
+      expect(out.body, contains('Add SessionMiddleware()'));
+    },
+  );
 
   test('session methods on a JWT guard throw', () async {
     expect((await client.get('/jwt')).status, 500);
