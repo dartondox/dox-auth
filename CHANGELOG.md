@@ -1,6 +1,12 @@
 ## Unreleased
 
 - Breaking, security: a JWT now holds only the user id, in the `sub` claim. Before, it held every visible column of the user, and anyone can read a JWT payload. Old tokens have no `sub`, so they stop working. Users must log in again. Code that read user fields from the token payload must load the user instead (`req.auth?.user<User>()`).
+- Security: a JWT can now be revoked. Each token has a random `jti`. The JWT driver keeps revoked tokens in the app cache.
+  - `Auth().logout(req)` now works on a JWT guard: it revokes the bearer token of the request until it expires. It now returns a `Future`, so `await` it. It takes an `IDoxRequest`.
+  - New `Auth().revokeAllTokens(id)`: all tokens of the user made before now stop working (eg. after a password change or a ban).
+  - New `Auth().forgetUser(id)`: drops the user from the `userCacheTtl` cache on all isolates and servers that share the cache.
+  - New `JwtAuthDriver(cacheStore: ...)` picks the cache store. Use a shared store like `redis` with many isolates or servers.
+  - Breaking: `verifyToken` reads the cache once per request, so the app cache must work. A token with no `jti` is rejected.
 
 ## 3.0.2
 

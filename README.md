@@ -68,7 +68,7 @@ For web pages, use `SessionAuthDriver()` in the guard. It needs `SessionMiddlewa
 
 ```dart
 bool ok = await Auth().attemptSession(req, credentials); // false when wrong
-Auth().logout(req);
+await Auth().logout(req);
 
 Route.get('/dashboard', <dynamic>[AuthMiddleware(redirectTo: '/login'), pageController.dashboard]);
 ```
@@ -87,8 +87,22 @@ Route.get('/dashboard', <dynamic>[AuthMiddleware(redirectTo: '/login'), pageCont
 
 Things to know: a token expires after 1 hour by default. Change it with `expiresIn`.
 A token holds only the user id (the `sub` claim), never the user columns. Anyone can read a token, so do not look for user data in it. Use `req.auth?.user<User>()`.
-There is no server list of tokens, so you can not cancel one token.
 A session login ends with `Auth().logout(req)`.
+
+### Revoke tokens
+
+Each token has a random id (the `jti` claim). The JWT driver keeps revoked tokens in the app cache (`Cache()` of `dox_core`), so a revoked token stops working at once:
+
+```dart
+await Auth().logout(req);          // revoke the bearer token of this request
+await Auth().revokeAllTokens(id);  // revoke all tokens of a user, eg. after a password change or a ban
+await Auth().forgetUser(id);       // drop the user from `userCacheTtl`, eg. after a ban
+```
+
+- A revoked token stays on the deny-list only until it expires.
+- `revokeAllTokens` keeps tokens made after the call. A token made in the same second as the call also still works.
+- `verifyToken` reads the cache once per request. Pick the store with `JwtAuthDriver(cacheStore: 'redis')`. With many isolates or servers, use a shared store like `redis`. A `memory` store is seen by one isolate only.
+- When the cache can not be read, the token is rejected.
 With the default `cookie` session driver, all session data sits in the cookie. So an old copy of the cookie still works after logout. If logout must really end old cookies, use the `cache` session driver, like `SessionConfig(driver: 'cache', store: 'redis')`.
 
 ## Custom guard (API key)

@@ -1,5 +1,7 @@
 // ignore_for_file: depend_on_referenced_packages
 import 'dart:convert';
+import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:dox_auth/dox_auth.dart';
 import 'package:dox_core/dox_core.dart';
@@ -64,15 +66,25 @@ class JwtAuthDriver extends AuthDriver {
   /// `verifyToken` does not load the user from the database on every
   /// request. Off (`null`) by default.
   /// A change to the user (eg. delete or ban) is seen only after this
-  /// time. Each server isolate has its own cache. Requests in this
-  /// time share the same user object, so do not change it per request.
+  /// time, unless you call `Auth().forgetUser(id)`. Each server isolate
+  /// has its own cache. Requests in this time share the same user
+  /// object, so do not change it per request.
   final Duration? userCacheTtl;
+
+  /// The store from `AppConfig.cache` that keeps revoked tokens. null
+  /// is the default store. `verifyToken` reads it once per request.
+  /// With many isolates or servers, use a shared store like `redis`, so
+  /// a logout on one server is seen on all of them.
+  final String? cacheStore;
 
   /// most users kept by [userCacheTtl]. When full, the cache is cleared.
   static const int _userCacheSize = 1000;
 
-  final Map<String, (Model<dynamic>, DateTime)> _userCache =
-      <String, (Model<dynamic>, DateTime)>{};
+  /// the user, when the entry expires, and when it was loaded (ms)
+  final Map<String, (Model<dynamic>, DateTime, int)> _userCache =
+      <String, (Model<dynamic>, DateTime, int)>{};
+
+  static final Random _random = Random.secure();
 
   /// constructor
   JwtAuthDriver({
@@ -83,6 +95,7 @@ class JwtAuthDriver extends AuthDriver {
     this.hashRounds = 10,
     this.userCacheTtl,
     this.previousSecrets,
+    this.cacheStore,
   }) {
     /// with an empty key anyone can sign a token for any user
     JWTKey key = secret;
@@ -140,56 +153,150 @@ class JwtAuthDriver extends AuthDriver {
         return null;
       }
 
-      /// only the configured algorithm is accepted, so a token can not
-      /// pick another one (like `none`, or HS256 with a public RSA key).
-      if (JWT.decode(token).header?['alg'] != algorithm.name) {
-        return null;
-      }
-
-      /// verify token
-      /// the audience is the guard name, so a token of one guard
-      /// does not work for another guard.
-      JWT jwt = _verify(token, guard);
-
-      /// get the payload
-      Map<String, dynamic> payload = jwt.payload;
+      Map<String, dynamic> payload = _payload(token, guard);
 
       /// get model from provider
       Model<dynamic> model = provider.model();
 
       /// the user id. The token has no other user data.
       dynamic id = payload['sub'];
+      dynamic jti = payload['jti'];
+      dynamic iat = payload['iat'];
 
-      if (id == null) {
+      /// a token with no jti can not be revoked, so it is not accepted
+      if (id == null || jti is! String || iat is! num) {
         return null;
       }
 
+      /// one cache read for all checks
+      String userKey = '$guard:$id';
       Duration? ttl = userCacheTtl;
+      Map<String, dynamic> found = await _cache.many(<String>[
+        _revokedKey(jti),
+        _validAfterKey(userKey),
+        if (ttl != null) _freshAfterKey(userKey),
+      ]);
+
+      /// logged out
+      if (found[_revokedKey(jti)] != null) {
+        return null;
+      }
+
+      /// made before `revokeAllTokens`
+      dynamic validAfter = found[_validAfterKey(userKey)];
+      if (validAfter is num && iat < validAfter) {
+        return null;
+      }
+
       if (ttl == null) {
         /// by user by id
         return await model.find(id);
       }
 
-      String cacheKey = '$guard:$id';
       DateTime now = DateTime.now();
-      (Model<dynamic>, DateTime)? cached = _userCache[cacheKey];
-      if (cached != null && now.isBefore(cached.$2)) {
+      (Model<dynamic>, DateTime, int)? cached = _userCache[userKey];
+      dynamic freshAfter = found[_freshAfterKey(userKey)];
+      bool forgotten =
+          freshAfter is num && cached != null && cached.$3 <= freshAfter;
+      if (cached != null && now.isBefore(cached.$2) && !forgotten) {
         return cached.$1;
       }
       Model<dynamic>? user = await model.find(id);
       if (user == null) {
-        _userCache.remove(cacheKey);
+        _userCache.remove(userKey);
         return null;
       }
       if (_userCache.length >= _userCacheSize) {
         _userCache.clear();
       }
-      _userCache[cacheKey] = (user, now.add(ttl));
+      _userCache[userKey] = (user, now.add(ttl), now.millisecondsSinceEpoch);
       return user;
     } catch (ex) {
       /// ignore any errors
     }
     return null;
+  }
+
+  /// The checked payload of [token]. Throws when the token is bad.
+  Map<String, dynamic> _payload(String token, String guard) {
+    /// only the configured algorithm is accepted, so a token can not
+    /// pick another one (like `none`, or HS256 with a public RSA key).
+    if (JWT.decode(token).header?['alg'] != algorithm.name) {
+      throw JWTInvalidException('invalid algorithm');
+    }
+
+    /// the audience is the guard name, so a token of one guard
+    /// does not work for another guard.
+    return _verify(token, guard).payload as Map<String, dynamic>;
+  }
+
+  CacheStore get _cache => Dox().cache.store(cacheStore);
+
+  static String _revokedKey(String jti) => 'auth:revoked:$jti';
+
+  static String _validAfterKey(String userKey) => 'auth:valid_after:$userKey';
+
+  static String _freshAfterKey(String userKey) => 'auth:fresh_after:$userKey';
+
+  /// A random token id (`jti`), so one token can be revoked.
+  static String _newJti() {
+    Uint8List bytes = Uint8List(16);
+    for (int i = 0; i < bytes.length; i++) {
+      bytes[i] = _random.nextInt(256);
+    }
+    return base64Url.encode(bytes).replaceAll('=', '');
+  }
+
+  /// Seconds since epoch, like the `iat` and `exp` claims.
+  static int _nowSeconds() => DateTime.now().millisecondsSinceEpoch ~/ 1000;
+
+  /// Revoke [token] (eg. on logout). Its `jti` goes on a deny-list in
+  /// the cache until the token expires. A bad or expired token is
+  /// ignored: it does not work anyway.
+  Future<void> revokeToken(String token, String guard) async {
+    Map<String, dynamic> payload;
+    try {
+      payload = _payload(token, guard);
+    } on JWTException {
+      return;
+    }
+    dynamic jti = payload['jti'];
+    dynamic exp = payload['exp'];
+    if (jti is! String) return;
+    Duration life = exp is num
+        ? Duration(seconds: exp.toInt() - _nowSeconds() + 1)
+        : expiresIn;
+    await _cache.put(_revokedKey(jti), 1, life);
+  }
+
+  /// Revoke all tokens of the user [id] made before now (eg. after a
+  /// password change or a ban). Tokens made after this call work.
+  /// Also drops the user from [userCacheTtl].
+  Future<void> revokeAllTokens(dynamic id, String guard) async {
+    /// ponytail: iat is in whole seconds, so a token made in the same
+    /// second as this call still works. A ms claim would close it.
+    /// kept as long as a new token lives; older tokens expired by then.
+    await _cache.put(
+      _validAfterKey('$guard:$id'),
+      _nowSeconds(),
+      expiresIn + Duration(seconds: 1),
+    );
+    await forgetUser(id, guard);
+  }
+
+  /// Drop the user [id] from [userCacheTtl] on all isolates and
+  /// servers that share [cacheStore], so the next request loads it
+  /// from the database (eg. after a ban or a delete).
+  Future<void> forgetUser(dynamic id, String guard) async {
+    String userKey = '$guard:$id';
+    _userCache.remove(userKey);
+    Duration? ttl = userCacheTtl;
+    if (ttl == null) return;
+    await _cache.put(
+      _freshAfterKey(userKey),
+      DateTime.now().millisecondsSinceEpoch,
+      ttl,
+    );
   }
 
   /// the current key first, then the old keys. made once.
@@ -248,6 +355,7 @@ class JwtAuthDriver extends AuthDriver {
         <String, dynamic>{'sub': id},
         issuer: issuer,
         audience: Audience.one(guard),
+        jwtId: _newJti(),
       );
       return jwt.sign(signingKey, algorithm: algorithm, expiresIn: expiresIn);
     } catch (error) {

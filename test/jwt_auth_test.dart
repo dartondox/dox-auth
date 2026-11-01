@@ -122,8 +122,24 @@ void init({Duration expiresIn = const Duration(hours: 1)}) {
   );
 }
 
+/// A fresh memory cache, like a Dox app with a `memory` store.
+void freshCache() {
+  Dox().cache = CacheManager(
+    CacheConfig(
+      defaultStore: 'memory',
+      stores: <String, Map<String, dynamic>>{
+        'memory': <String, dynamic>{'driver': 'memory'},
+      },
+    ),
+  );
+}
+
+/// claims that the driver needs in a token made by hand
+const Map<String, dynamic> claims = <String, dynamic>{'sub': 1, 'jti': 'j1'};
+
 void main() {
   setUp(() {
+    freshCache();
     users
       ..clear()
       ..[1] = FakeUser(1, 'a@dox.dev', Hash.make('secret'));
@@ -187,8 +203,7 @@ void main() {
     test(
       'verifyToken with a token signed by another secret is rejected',
       () async {
-        String token = JWT(<String, dynamic>{'sub': 1})
-            .sign(SecretKey('other-secret'));
+        String token = JWT(claims).sign(SecretKey('other-secret'));
         Auth auth = Auth();
         await auth.verifyToken(bearer(token));
         expect(auth.isLoggedIn(), isFalse);
@@ -381,6 +396,142 @@ void main() {
     });
   });
 
+  group('Revoke tokens |', () {
+    Future<bool> loggedIn(String token) async {
+      Auth auth = Auth();
+      await auth.verifyToken(bearer(token));
+      return auth.isLoggedIn();
+    }
+
+    test('each token has its own jti', () {
+      String a = Auth().login(users[1]!)!;
+      String b = Auth().login(users[1]!)!;
+      expect(JWT.decode(a).jwtId, isNotEmpty);
+      expect(JWT.decode(a).jwtId, isNot(JWT.decode(b).jwtId));
+    });
+
+    test('a token without a jti is rejected', () async {
+      String token = JWT(<String, dynamic>{
+        'sub': 1,
+      }, audience: Audience.one('web')).sign(signingKey);
+      expect(await loggedIn(token), isFalse);
+    });
+
+    test('a token used after logout is rejected', () async {
+      String token = Auth().login(users[1]!)!;
+      String other = Auth().login(users[1]!)!;
+      expect(await loggedIn(token), isTrue);
+
+      await Auth().logout(bearer(token));
+      expect(await loggedIn(token), isFalse);
+      // only this token: another login of the same user still works
+      expect(await loggedIn(other), isTrue);
+    });
+
+    test('the deny-list entry lives as long as the token', () async {
+      init(expiresIn: Duration(minutes: 5));
+      String token = Auth().login(users[1]!)!;
+      await Auth().logout(bearer(token));
+      String jti = JWT.decode(token).jwtId!;
+      expect(await Dox().cache.store().has('auth:revoked:$jti'), isTrue);
+    });
+
+    test('logout with a bad token does nothing', () async {
+      await Auth().logout(bearer('not-a-jwt'));
+      await Auth().logout(FakeRequest());
+    });
+
+    test('revokeAllTokens rejects older tokens of the user', () async {
+      int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      String old = JWT(<String, dynamic>{
+        ...claims,
+        'iat': now - 10,
+      }, audience: Audience.one('web')).sign(signingKey, noIssueAt: true);
+      String adminToken = Auth(guard: 'admin').login(admins[1]!)!;
+      expect(await loggedIn(old), isTrue);
+
+      await Auth().revokeAllTokens(1);
+      expect(await loggedIn(old), isFalse);
+
+      // a new login after the call works
+      expect(await loggedIn(Auth().login(users[1]!)!), isTrue);
+      // the same id on another guard is not touched
+      Auth admin = Auth(guard: 'admin');
+      await admin.verifyToken(bearer(adminToken));
+      expect(admin.isLoggedIn(), isTrue);
+    });
+
+    test('forgetUser drops a banned user from the user cache', () async {
+      JwtAuthDriver driver = JwtAuthDriver(
+        secret: SecretKey(secret),
+        userCacheTtl: Duration(minutes: 1),
+      );
+      Auth.initialize(
+        AuthConfig(
+          defaultGuard: 'web',
+          guards: <String, AuthGuard>{
+            'web': AuthGuard(
+              driver: driver,
+              provider: AuthProvider(model: () => FakeUser()),
+            ),
+          },
+        ),
+      );
+      String token = Auth().login(users[1]!)!;
+      expect(await loggedIn(token), isTrue);
+
+      // banned (here: removed). the cache still has the user.
+      users.clear();
+      expect(await loggedIn(token), isTrue);
+
+      // another isolate or server forgets the user, through the cache
+      JwtAuthDriver otherIsolate = JwtAuthDriver(
+        secret: SecretKey(secret),
+        userCacheTtl: Duration(minutes: 1),
+      );
+      await otherIsolate.forgetUser(1, 'web');
+      expect(await loggedIn(token), isFalse);
+    });
+
+    test('forgetUser on this isolate drops the user at once', () async {
+      Auth.initialize(
+        AuthConfig(
+          defaultGuard: 'web',
+          guards: <String, AuthGuard>{
+            'web': AuthGuard(
+              driver: JwtAuthDriver(
+                secret: SecretKey(secret),
+                userCacheTtl: Duration(minutes: 1),
+              ),
+              provider: AuthProvider(model: () => FakeUser()),
+            ),
+          },
+        ),
+      );
+      String token = Auth().login(users[1]!)!;
+      expect(await loggedIn(token), isTrue);
+      users.clear();
+      await Auth().forgetUser(1);
+      expect(await loggedIn(token), isFalse);
+    });
+
+    test('revoke methods need a JWT guard', () {
+      Auth.initialize(
+        AuthConfig(
+          defaultGuard: 'web',
+          guards: <String, AuthGuard>{
+            'web': AuthGuard(
+              driver: SessionAuthDriver(),
+              provider: AuthProvider(model: () => FakeUser()),
+            ),
+          },
+        ),
+      );
+      expect(() => Auth().revokeAllTokens(1), throwsStateError);
+      expect(() => Auth().forgetUser(1), throwsStateError);
+    });
+  });
+
   group('Hash rounds |', () {
     test('attempt works with a custom hashRounds', () async {
       users[3] = FakeUser(3, 'low@dox.dev', Hash.make('pw', rounds: 4));
@@ -465,23 +616,24 @@ void main() {
     });
 
     test('a token with no guard audience is rejected', () async {
-      String token = JWT(<String, dynamic>{'sub': 1}).sign(signingKey);
+      String token = JWT(claims).sign(signingKey);
       Auth auth = Auth();
       await auth.verifyToken(bearer(token));
       expect(auth.isLoggedIn(), isFalse);
     });
 
     test('a token signed with the raw secret is rejected', () async {
-      String token = JWT(<String, dynamic>{
-        'sub': 1,
-      }, audience: Audience.one('web')).sign(SecretKey(secret));
+      String token = JWT(
+        claims,
+        audience: Audience.one('web'),
+      ).sign(SecretKey(secret));
       Auth auth = Auth();
       await auth.verifyToken(bearer(token));
       expect(auth.isLoggedIn(), isFalse);
     });
 
     test('a token with another algorithm is rejected', () async {
-      JWT jwt = JWT(<String, dynamic>{'sub': 1}, audience: Audience.one('web'));
+      JWT jwt = JWT(claims, audience: Audience.one('web'));
       Auth good = Auth();
       await good.verifyToken(bearer(jwt.sign(signingKey)));
       expect(good.isLoggedIn(), isTrue);
@@ -531,9 +683,10 @@ void main() {
     /// a token for user 1 on the `web` guard, signed like the driver does
     String oldToken({Duration expiresIn = const Duration(hours: 1)}) {
       JWTKey key = JwtAuthDriver(secret: SecretKey(oldKey)).signingKey;
-      return JWT(<String, dynamic>{
-        'sub': 1,
-      }, audience: Audience.one('web')).sign(key, expiresIn: expiresIn);
+      return JWT(
+        claims,
+        audience: Audience.one('web'),
+      ).sign(key, expiresIn: expiresIn);
     }
 
     Future<bool> loggedIn(String token, JwtAuthDriver driver) async {
@@ -581,9 +734,10 @@ void main() {
 
     test('a token that matches no key is rejected', () async {
       appConfig(<String>[oldKey]);
-      String token = JWT(<String, dynamic>{
-        'sub': 1,
-      }, audience: Audience.one('web')).sign(SecretKey('some-other-key'));
+      String token = JWT(
+        claims,
+        audience: Audience.one('web'),
+      ).sign(SecretKey('some-other-key'));
       JwtAuthDriver driver = JwtAuthDriver(secret: SecretKey(newKey));
       expect(await loggedIn(token, driver), isFalse);
     });

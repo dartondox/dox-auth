@@ -40,6 +40,7 @@ The `User` model must hide its password: `List<String> get hidden => <String>['p
 ```dart title="lib/routes/api.dart"
 Route.post('/auth/login', (AuthController c) => c.login);
 Route.get('/auth/user', <dynamic>[AuthMiddleware(), (AuthController c) => c.user]);
+Route.post('/auth/logout', <dynamic>[AuthMiddleware(), (AuthController c) => c.logout]);
 ```
 
 ## 3. Controller
@@ -65,6 +66,12 @@ class AuthController {
 
   User? user(DoxRequest req) {
     return req.auth?.user<User>();
+  }
+
+  /// the token stops working at once, not only when it expires
+  Future<dynamic> logout(DoxRequest req) async {
+    await Auth().logout(req);
+    return <String, dynamic>{'message': 'logged out'};
   }
 }
 ```
@@ -92,8 +99,8 @@ class LoginController {
     return redirect('/dashboard');
   }
 
-  DoxResponse logout(DoxRequest req) {
-    Auth().logout(req);
+  Future<DoxResponse> logout(DoxRequest req) async {
+    await Auth().logout(req);
     return redirect('/');
   }
 }
