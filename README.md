@@ -83,6 +83,7 @@ Route.get('/dashboard', <dynamic>[AuthMiddleware(redirectTo: '/login'), pageCont
 - `AuthMiddleware` answers `401` when the user is not logged in. With `redirectTo`, it sends the user to that page instead.
 - More than one guard, like `web` and `admin`, each with its own driver and user model.
 - The user is loaded from the database on each request with `dox_orm`.
+- Gates and policies for authorization, with the `Can` middleware and `req.can`.
 
 Things to know: a token expires after 1 hour by default. Change it with `expiresIn`.
 There is no server list of tokens, so you can not cancel one token.
@@ -138,6 +139,60 @@ if (user == null) throw UnAuthorizedException();
 Auth(guard: 'api').setUser(req, user);
 return req;
 ```
+
+## Authorization (gates and policies)
+
+Auth says who the user is. Gates and policies say what the user may do.
+
+A gate is one rule. The types come from the function:
+
+```dart
+Gate.define('update-post', (User user, Post post) => post.userId == user.id);
+Gate.define('create-post', (User user, _) => user.verified == true); // no subject
+
+await Gate.allows(user, 'update-post', post); // true or false
+await Gate.authorize(user, 'update-post', post); // 403 when denied
+```
+
+A policy holds the rules of one model:
+
+```dart
+class PostPolicy extends Policy<User, Post> {
+  bool create(User user) => user.verified == true;
+  bool update(User user, Post post) => post.userId == user.id;
+
+  @override
+  Map<String, Function> get abilities => <String, Function>{
+    'create': create,
+    'update': update,
+  };
+}
+
+Gate.policy<Post>(PostPolicy());
+await Gate.allows(user, 'update', post);
+await Gate.allows(user, 'create', Post); // no model: pass the type
+```
+
+In a controller, `req.can`, `req.cannot` and `req.authorize` use the user of `req.auth`.
+On a route, use the `Can` middleware after `AuthMiddleware`.
+A guest gets `401`. A user who may not do it gets `403`.
+
+```dart
+await req.authorize('update', post);
+
+Route.post('/posts', <dynamic>[AuthMiddleware(), Can('create', subject: Post), postController.store]);
+Route.put('/posts/{post}', <dynamic>[AuthMiddleware(), Can('update', param: 'post'), postController.update]);
+```
+
+With `param`, the subject is the value of `Route.bind` for that route param.
+
+More:
+
+- A check gives a `bool` or a `GateResponse`. `GateResponse.deny('Why')` sets the message of the 403.
+- `Gate.before((User user, String ability) => user.isAdmin ? true : null)` decides before every check. `Gate.after` sees every answer, eg. to log it.
+- `Gate.any` and `Gate.all` check a list of abilities.
+- A guest is denied, unless the user type is nullable, like `(User? user, Post post)`.
+- Gates and policies are kept per isolate. Dox runs many isolates, so register them in a `DoxProvider` `setup()`. It runs in every isolate.
 
 ## Documentation
 
