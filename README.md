@@ -117,6 +117,48 @@ await Auth().forgetUser(id);       // drop the user from `userCacheTtl`, eg. aft
 - The `revokeAllTokens` time comes from the server clock. Keep server clocks in sync (NTP). If the server that made a token has a clock that is ahead, its old tokens can pass the check.
 With the default `cookie` session driver, all session data sits in the cookie. So an old copy of the cookie still works after logout. If logout must really end old cookies, use the `cache` session driver, like `SessionConfig(driver: 'cache', store: 'redis')`.
 
+### Login throttle
+
+Limit failed logins per account and ip. It is off by default. Turn it on in the `register` or `boot` of a provider. `Auth.throttle` is a static, so each isolate has its own copy. If you set it in `main()` before the server starts, only the first isolate throttles.
+
+```dart
+Auth.throttle = LoginThrottle(maxAttempts: 5, decay: Duration(minutes: 1));
+
+// JWT: pass the client ip
+String? token = await Auth(ip: req.ip()).attempt(credentials);
+
+// session: the ip comes from the request
+bool ok = await Auth().attemptSession(req, credentials);
+```
+
+- After `maxAttempts` failed logins for the same login field (eg. the email) and ip, the next try throws `LoginThrottledException` (429) until `decay` has passed. `retryAfter` says how long to wait.
+- A good login clears the count. The login field is trimmed and lower case, so `A@x.com` and `a@x.com` share one count.
+- The counts live in the app cache. Pick a store with `LoginThrottle(store: 'redis')`. Use a shared store like `redis` for many isolates or servers.
+- Without an ip, `attempt` counts per account only. Then anyone can lock an account for `decay`, so pass the ip.
+- `attemptSession` sends a `Retry-After` header with the 429. `attempt` has no request, so catch `LoginThrottledException` and set the header from `retryAfter` if you need it.
+- Known limits: a burst of parallel tries can get a few more than `maxAttempts`, because the check and the count are separate cache steps. With more than one login field (eg. email and username), each set of fields that a client sends gets its own count.
+
+### Password hash cost
+
+Passwords use bcrypt with cost 10 by default. Each step up doubles the time of a login. To raise it, set the cost for new hashes and tell the driver, so a login for an unknown email takes as long as a wrong password:
+
+```dart
+Hash.rounds = 12;
+JwtAuthDriver(secret: SecretKey(env.appKey), hashRounds: 12);
+SessionAuthDriver(hashRounds: 12);
+```
+
+Old hashes keep their own cost, so they still work. Hash them again on the next good login:
+
+```dart
+if (Auth.needsRehash(user.password)) {
+  user.password = Hash.make(password);
+  await user.save();
+}
+```
+
+`Auth.hashCost(hash)` gives the cost of a hash. `Auth.needsRehash(hash, rounds: 12)` checks another cost.
+
 ## Custom guard (API key)
 
 You can check the user in your own way, like an API key in the header.

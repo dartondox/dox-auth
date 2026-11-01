@@ -1,5 +1,6 @@
 // ignore_for_file: depend_on_referenced_packages
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -168,6 +169,15 @@ class JwtAuthDriver extends AuthDriver {
     print('[dox] warning: $message');
   }
 
+  static final RegExp _bearerPrefix = RegExp(r'^bearer ', caseSensitive: false);
+
+  /// The token in the `Authorization` header of [req], or null.
+  /// The `Bearer ` prefix is matched in any case (`bearer`, `BEARER`).
+  /// A header with no prefix is used as it is, like in 3.0.2.
+  static String? bearerToken(IDoxRequest req) {
+    return req.header('Authorization')?.replaceFirst(_bearerPrefix, '');
+  }
+
   /// verify token and get model from provider
   /// and get user data
   @override
@@ -176,7 +186,7 @@ class JwtAuthDriver extends AuthDriver {
       AuthProvider provider = AuthEngine().guard(guard).provider;
 
       /// get token from header
-      String? token = req.header('Authorization')?.replaceFirst('Bearer ', '');
+      String? token = bearerToken(req);
 
       /// if not token just return
       if (token == null) {
@@ -251,10 +261,29 @@ class JwtAuthDriver extends AuthDriver {
       }
       _userCache[userKey] = (user, now.add(ttl), now.millisecondsSinceEpoch);
       return user;
-    } catch (ex) {
-      /// ignore any errors
+    } on JWTException {
+      /// a bad, expired or changed token: a normal 401, nothing to log
+    } on FormatException {
+      /// a token that is not a JWT at all
+    } catch (error, stackTrace) {
+      /// Anything else (the database is down, a bad config) is a bug or
+      /// an outage. The answer is still a 401, like in 3.0.2, but the
+      /// error is reported so it is not hidden.
+      _reportError(error, stackTrace);
     }
     return null;
+  }
+
+  /// Sends [error] to `AppConfig.exceptionHandler`, so it shows up in
+  /// the log or the error tracker of the app. Before Dox is set up, it
+  /// goes to stderr.
+  static void _reportError(Object error, StackTrace stackTrace) {
+    try {
+      Dox().config.exceptionHandler.report(error, stackTrace);
+    } catch (_) {
+      stderr.writeln('[dox] dox_auth verifyToken failed: $error');
+      stderr.writeln(stackTrace);
+    }
   }
 
   /// The checked payload of [token]. Throws when the token is bad.

@@ -1,8 +1,11 @@
 // ignore_for_file: depend_on_referenced_packages
+import 'dart:io';
+
 import 'package:dox_auth/src/auth_engine.dart';
 import 'package:dox_auth/src/drivers/jwt_auth_driver.dart';
 import 'package:dox_auth/src/drivers/session_auth_driver.dart';
 import 'package:dox_auth/src/interfaces.dart';
+import 'package:dox_auth/src/login_throttle.dart';
 import 'package:dox_core/dox_core.dart';
 import 'package:dox_orm/dox_orm.dart';
 
@@ -14,7 +17,14 @@ class Auth implements IAuth {
   /// ```
   final String? guard;
 
-  Auth({this.guard});
+  /// The client ip, for [throttle]. Only `attempt` uses it;
+  /// `attemptSession` reads it from the request.
+  /// ```
+  /// Auth(ip: req.ip()).attempt(credentials);
+  /// ```
+  final String? ip;
+
+  Auth({this.guard, this.ip});
 
   /// user data
   Model<dynamic>? _userData;
@@ -22,6 +32,30 @@ class Auth implements IAuth {
   String get _guard => guard ?? AuthEngine().config.defaultGuard;
 
   AuthDriver get _driver => AuthEngine().guard(_guard).driver;
+
+  static final RegExp _bcryptCost = RegExp(r'^\$2[abxy]?\$(\d{2})\$');
+
+  /// The bcrypt cost of [hash], or null when it is not a bcrypt hash.
+  /// ```
+  /// Auth.hashCost(r'$2a$10$...'); // 10
+  /// ```
+  static int? hashCost(String hash) {
+    String? cost = _bcryptCost.firstMatch(hash)?.group(1);
+    return cost == null ? null : int.parse(cost);
+  }
+
+  /// true when [hash] was not made with the cost [rounds] (default:
+  /// `Hash.rounds`), or is not a bcrypt hash. After you raise the cost,
+  /// hash the password again on the next good login:
+  /// ```
+  /// if (Auth.needsRehash(user.password)) {
+  ///   user.password = Hash.make(password);
+  ///   await user.save();
+  /// }
+  /// ```
+  static bool needsRehash(String hash, {int? rounds}) {
+    return hashCost(hash) != (rounds ?? Hash.rounds);
+  }
 
   static void initialize(AuthConfig authConfig) {
     AuthEngine().init(authConfig);
@@ -42,9 +76,44 @@ class Auth implements IAuth {
     return _userData as T?;
   }
 
+  /// The login throttle for `attempt` and `attemptSession`.
+  /// Off (`null`) by default, like in 3.0.2. See [LoginThrottle].
+  /// ```
+  /// Auth.throttle = LoginThrottle(maxAttempts: 5, decay: Duration(minutes: 1));
+  /// ```
+  static LoginThrottle? throttle;
+
+  /// Check the credentials and give a token, or null when they are wrong.
+  /// With [throttle] on, make the `Auth` with the client [ip]
+  /// (`Auth(ip: req.ip())`), so the count is per account and ip.
+  /// Without an ip, the count is per account only, so anyone can lock
+  /// an account for `decay`.
   Future<String?> attempt(Map<String, dynamic> credentials) async {
-    _userData = await _driver.attempt(credentials, _guard);
+    _userData = await _throttled(credentials, ip);
     return _createToken();
+  }
+
+  /// [AuthDriver.attempt], with [throttle] when it is on.
+  Future<Model<dynamic>?> _throttled(
+    Map<String, dynamic> credentials,
+    String? ip,
+  ) async {
+    AuthDriver driver = _driver;
+    LoginThrottle? limit = throttle;
+    if (limit == null) return driver.attempt(credentials, _guard);
+
+    List<String> fields = AuthEngine().guard(_guard).provider.identifierFields;
+    String key = LoginThrottle.key(_guard, <Object?>[
+      for (String field in fields) credentials[field],
+    ], ip);
+    await limit.check(key);
+    Model<dynamic>? user = await driver.attempt(credentials, _guard);
+    if (user == null) {
+      await limit.hit(key);
+    } else {
+      await limit.clear(key);
+    }
+    return user;
   }
 
   String? login(Model<dynamic> user) {
@@ -77,7 +146,15 @@ class Auth implements IAuth {
     Map<String, dynamic> credentials,
   ) async {
     SessionAuthDriver driver = _sessionDriver;
-    _userData = await driver.attempt(credentials, _guard);
+    try {
+      _userData = await _throttled(credentials, req.ip());
+    } on LoginThrottledException catch (error) {
+      req.httpRequest.response.headers.set(
+        HttpHeaders.retryAfterHeader,
+        (error.retryAfter.inMilliseconds / 1000).ceil(),
+      );
+      rethrow;
+    }
     Model<dynamic>? user = _userData;
     if (user == null) return false;
     driver.login(req, user, _guard);
@@ -106,7 +183,7 @@ class Auth implements IAuth {
   Future<void> revokeToken(IDoxRequest req) async {
     JwtAuthDriver driver = _jwtDriver;
     _userData = null;
-    String? token = req.header('Authorization')?.replaceFirst('Bearer ', '');
+    String? token = JwtAuthDriver.bearerToken(req);
     await driver.revokeToken(token, _guard);
   }
 

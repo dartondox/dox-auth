@@ -181,6 +181,22 @@ class RecordingDriver extends JwtAuthDriver {
   }
 }
 
+/// A user table that can not be read, like a database outage.
+class BrokenUser extends FakeUser {
+  @override
+  Future<FakeUser?> find(dynamic arg1, [dynamic arg2]) async {
+    throw StateError('database is down');
+  }
+}
+
+/// Keeps the errors that Dox reports.
+class RecordingExceptionHandler extends ExceptionHandler {
+  final List<Object> errors = <Object>[];
+
+  @override
+  void report(Object error, StackTrace stackTrace) => errors.add(error);
+}
+
 /// claims that the driver needs in a token made by hand
 const Map<String, dynamic> claims = <String, dynamic>{'sub': 1, 'jti': 'j1'};
 
@@ -1044,6 +1060,187 @@ void main() {
       Auth auth = Auth();
       await auth.verifyToken(bearer(Auth().login(user)!));
       expect(auth.user<FakeUser>()?.email, 'a@dox.dev');
+    });
+  });
+
+  group('Bearer prefix |', () {
+    test('any case of the Bearer prefix works', () async {
+      String token = Auth().login(users[1]!)!;
+      for (String prefix in <String>['Bearer', 'bearer', 'BEARER', 'beARer']) {
+        Auth auth = Auth();
+        await auth.verifyToken(
+          FakeRequest(<String, String>{'Authorization': '$prefix $token'}),
+        );
+        expect(auth.isLoggedIn(), isTrue, reason: prefix);
+      }
+    });
+
+    test('a header with no prefix still works, like 3.0.2', () async {
+      String token = Auth().login(users[1]!)!;
+      Auth auth = Auth();
+      await auth.verifyToken(
+        FakeRequest(<String, String>{'Authorization': token}),
+      );
+      expect(auth.isLoggedIn(), isTrue);
+    });
+
+    test('revokeToken reads a lower case prefix', () async {
+      init(revocation: true);
+      String token = Auth().login(users[1]!)!;
+      await Auth().revokeToken(
+        FakeRequest(<String, String>{'Authorization': 'bearer $token'}),
+      );
+      Auth auth = Auth();
+      await auth.verifyToken(bearer(token));
+      expect(auth.isLoggedIn(), isFalse);
+    });
+  });
+
+  group('Login throttle |', () {
+    Map<String, dynamic> wrong = <String, dynamic>{
+      'email': 'a@dox.dev',
+      'password': 'nope',
+    };
+    Map<String, dynamic> right = <String, dynamic>{
+      'email': 'a@dox.dev',
+      'password': 'secret',
+    };
+
+    setUp(() {
+      users[1] = FakeUser(1, 'a@dox.dev', Hash.make('secret', rounds: 4));
+      initWith(JwtAuthDriver(secret: SecretKey(secret), hashRounds: 4));
+    });
+    tearDown(() => Auth.throttle = null);
+
+    test('is off by default, like 3.0.2', () async {
+      for (int i = 0; i < 10; i++) {
+        expect(await Auth(ip: '1.1.1.1').attempt(wrong), isNull);
+      }
+      expect(await Auth(ip: '1.1.1.1').attempt(right), isNotNull);
+    });
+
+    test('blocks the account and ip after maxAttempts failures', () async {
+      Auth.throttle = LoginThrottle(maxAttempts: 3);
+      for (int i = 0; i < 3; i++) {
+        expect(await Auth(ip: '1.1.1.1').attempt(wrong), isNull);
+      }
+      // the right password is blocked too, until the decay ends
+      await expectLater(
+        Auth(ip: '1.1.1.1').attempt(right),
+        throwsA(
+          isA<LoginThrottledException>()
+              .having((LoginThrottledException e) => e.code, 'code', 429)
+              .having(
+                (LoginThrottledException e) => e.retryAfter.inSeconds,
+                'retryAfter',
+                inInclusiveRange(55, 60),
+              ),
+        ),
+      );
+      // the case of the email does not matter
+      await expectLater(
+        Auth(ip: '1.1.1.1').attempt(<String, dynamic>{
+          'email': ' A@DOX.dev',
+          'password': 'secret',
+        }),
+        throwsA(isA<LoginThrottledException>()),
+      );
+      // another ip is not blocked
+      expect(await Auth(ip: '2.2.2.2').attempt(right), isNotNull);
+    });
+
+    test('a good login clears the count', () async {
+      Auth.throttle = LoginThrottle(maxAttempts: 2);
+      expect(await Auth(ip: '1.1.1.1').attempt(wrong), isNull);
+      expect(await Auth(ip: '1.1.1.1').attempt(right), isNotNull);
+      expect(await Auth(ip: '1.1.1.1').attempt(wrong), isNull);
+      expect(await Auth(ip: '1.1.1.1').attempt(right), isNotNull);
+    });
+
+    test('a count with no expiry never locks the account', () async {
+      Auth.throttle = LoginThrottle(maxAttempts: 2);
+      String key = LoginThrottle.key('web', <Object?>['a@dox.dev'], '1.1.1.1');
+      CacheStore store = Dox().cache.store();
+      int past = DateTime.now().millisecondsSinceEpoch - 1000;
+      // what a key that expires between two cache steps can leave behind:
+      // a count with no ttl, and no end, or an end in the past
+      for (Object value in <Object>[99, '99', '99|$past']) {
+        await store.forever(key, value);
+        expect(await Auth(ip: '1.1.1.1').attempt(right), isNotNull);
+      }
+      // a failure after a stale count starts a new window with a ttl
+      await store.forever(key, '99|$past');
+      expect(await Auth(ip: '1.1.1.1').attempt(wrong), isNull);
+      expect(await Auth(ip: '1.1.1.1').attempt(right), isNotNull);
+    });
+
+    test('the block ends after decay', () async {
+      Auth.throttle = LoginThrottle(
+        maxAttempts: 1,
+        decay: Duration(milliseconds: 300),
+      );
+      expect(await Auth(ip: '1.1.1.1').attempt(wrong), isNull);
+      await expectLater(
+        Auth(ip: '1.1.1.1').attempt(right),
+        throwsA(isA<LoginThrottledException>()),
+      );
+      await Future<void>.delayed(Duration(milliseconds: 1100));
+      expect(await Auth(ip: '1.1.1.1').attempt(right), isNotNull);
+    });
+  });
+
+  group('verifyToken errors |', () {
+    late RecordingExceptionHandler handler;
+
+    setUp(() {
+      handler = RecordingExceptionHandler();
+      Dox().config = AppConfig(appKey: secret, exceptionHandler: handler);
+    });
+
+    test(
+      'an unexpected error is reported, and the answer is still no user',
+      () async {
+        String token = Auth().login(users[1]!)!;
+        Auth.initialize(
+          AuthConfig(
+            defaultGuard: 'web',
+            guards: <String, AuthGuard>{
+              'web': AuthGuard(
+                driver: JwtAuthDriver(secret: SecretKey(secret)),
+                provider: AuthProvider(model: () => BrokenUser()),
+              ),
+            },
+          ),
+        );
+        Auth auth = Auth();
+        await auth.verifyToken(bearer(token));
+        expect(auth.isLoggedIn(), isFalse);
+        expect(handler.errors, hasLength(1));
+        expect(handler.errors.first.toString(), contains('database is down'));
+      },
+    );
+
+    test('a bad or expired token is not reported', () async {
+      String token = Auth().login(users[1]!)!;
+      String expired = JWT(
+        <String, dynamic>{...claims, 'id': 1},
+        audience: Audience.one('web'),
+      ).sign(signingKey, expiresIn: Duration(seconds: -10));
+      String otherKey = JWT(
+        <String, dynamic>{...claims, 'id': 1},
+        audience: Audience.one('web'),
+      ).sign(SecretKey('another-secret-another-secret-123'));
+      for (String bad in <String>[
+        'not-a-jwt',
+        '${token}x',
+        expired,
+        otherKey,
+      ]) {
+        Auth auth = Auth();
+        await auth.verifyToken(bearer(bad));
+        expect(auth.isLoggedIn(), isFalse, reason: bad);
+      }
+      expect(handler.errors, isEmpty);
     });
   });
 

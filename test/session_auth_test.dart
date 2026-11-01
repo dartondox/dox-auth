@@ -81,7 +81,17 @@ void main() {
       ),
     );
     client = await DoxTestClient.start(
-      AppConfig(appKey: secret, routers: <Router>[WebRouter()]),
+      AppConfig(
+        appKey: secret,
+        routers: <Router>[WebRouter()],
+        // memory, so the login throttle counts do not stay on disk
+        cache: const CacheConfig(
+          defaultStore: 'memory',
+          stores: <String, Map<String, dynamic>>{
+            'memory': <String, dynamic>{'driver': 'memory'},
+          },
+        ),
+      ),
     );
   });
 
@@ -112,6 +122,20 @@ void main() {
     });
     expect(login.body, 'wrong');
     expect((await browser.get('/me')).status, 401);
+  });
+
+  test('with Auth.throttle on, too many wrong logins give 429', () async {
+    Auth.throttle = LoginThrottle(maxAttempts: 2);
+    addTearDown(() => Auth.throttle = null);
+    Map<String, dynamic> wrong = <String, dynamic>{
+      'email': 'throttle@dox.dev',
+      'password': 'nope',
+    };
+    expect((await client.post('/login', body: wrong)).body, 'wrong');
+    expect((await client.post('/login', body: wrong)).body, 'wrong');
+    TestResponse blocked = await client.post('/login', body: wrong);
+    expect(blocked.status, 429);
+    expect(int.parse(blocked.header('retry-after')!), inInclusiveRange(1, 60));
   });
 
   test('redirectTo sends a guest to the login page', () async {
