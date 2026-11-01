@@ -137,7 +137,7 @@ bool ok = await Auth().attemptSession(req, credentials);
 - Without an ip, `attempt` counts per account only. Then anyone can lock an account for `decay`, so pass the ip.
 - `attemptSession` sends a `Retry-After` header with the 429. `attempt` has no request, so catch `LoginThrottledException` and set the header from `retryAfter` if you need it.
 - Known limit, parallel tries: the limit is checked before the failed try is counted. So tries that run at the same time all pass the check before any of them is counted. A burst of parallel wrong logins can all run, far past `maxAttempts`. In a test, 50 parallel wrong logins with `maxAttempts: 5` all ran. The limit works for tries that come one after another, like a person or a simple script. To stop fast parallel guessing, also put `RateLimit` on the login route.
-- Known limit, lost counts: a failed try reads the count, adds one, and writes it back. With many isolates or servers on one Redis store, two failed tries at the same time can both write the same number, so one count is lost.
+- Known limit, lost counts: a failed try reads the count, adds one, and writes it back. Two failed tries at the same time can read the same count and both write the same number, so one count is lost. This can happen with any store, even in one isolate. It happens more with many isolates or servers on one Redis store.
 - With more than one login field (eg. email and username), each set of fields that a client sends gets its own count.
 
 ### Password hash cost

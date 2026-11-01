@@ -75,11 +75,11 @@ class NoSessionRouter extends Router {
   void register() {
     Route.post('login', (DoxRequest req) async {
       try {
-        await Auth().attemptSession(
+        bool ok = await Auth().attemptSession(
           req,
           req.only(<String>['email', 'password']),
         );
-        return 'no error';
+        return '$ok';
       } on StateError catch (error) {
         return error.message;
       }
@@ -202,17 +202,19 @@ void main() {
   });
 
   test(
-    'without SessionMiddleware, session login fails with a clear error',
+    'without SessionMiddleware, a right password gives a clear error',
     () async {
-      // the right and the wrong password both fail, so the missing
-      // middleware is never hidden behind a "wrong password"
-      for (String password in <String>['secret', 'nope']) {
-        TestResponse res = await client.post(
-          '/bare/login',
-          body: <String, dynamic>{'email': 'a@dox.dev', 'password': password},
-        );
-        expect(res.body, contains('Add SessionMiddleware()'));
-      }
+      TestResponse ok = await client.post(
+        '/bare/login',
+        body: <String, dynamic>{'email': 'a@dox.dev', 'password': 'secret'},
+      );
+      expect(ok.body, contains('Add SessionMiddleware()'));
+      // a wrong password gives false, like in 3.0.2
+      TestResponse wrong = await client.post(
+        '/bare/login',
+        body: <String, dynamic>{'email': 'a@dox.dev', 'password': 'nope'},
+      );
+      expect(wrong.body, 'false');
       TestResponse out = await client.post('/bare/logout');
       expect(out.body, contains('Add SessionMiddleware()'));
     },
