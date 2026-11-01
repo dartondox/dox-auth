@@ -192,11 +192,17 @@ class JwtAuthDriver extends AuthDriver {
     return null;
   }
 
+  /// the current key first, then the old keys. made once.
+  late final List<JWTKey> _verifyKeys = <JWTKey>[
+    signingKey,
+    ...previousSigningKeys,
+  ];
+
   /// Checks [token] with the current key, then with each old key.
   /// Only a wrong signature moves to the next key. An expired token or
   /// a bad claim fails at once.
   JWT _verify(String token, String guard) {
-    List<JWTKey> keys = <JWTKey>[signingKey, ...previousSigningKeys];
+    List<JWTKey> keys = _verifyKeys;
     for (int i = 0; ; i++) {
       try {
         return JWT.verify(
