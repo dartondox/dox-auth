@@ -46,6 +46,27 @@ DatabaseConfig dbConfig = DatabaseConfig(
 
 const String table = 'test_access_tokens';
 
+/// Users with a text id, that can hold only digits.
+final Map<String, TextUser> textUsers = <String, TextUser>{};
+
+class TextUser extends Model<TextUser> {
+  String? id;
+
+  /// the type of the last id given to [find]
+  static Type? lastFindType;
+
+  TextUser([this.id]);
+
+  @override
+  Map<String, dynamic> convertToMap(dynamic i) => <String, dynamic>{'id': id};
+
+  @override
+  Future<TextUser?> find(dynamic arg1, [dynamic arg2]) async {
+    lastFindType = arg1.runtimeType;
+    return arg1 is String ? textUsers[arg1] : null;
+  }
+}
+
 void useConnection(String connection) {
   AccessTokenAuthDriver driver(Duration? expiresIn) {
     return AccessTokenAuthDriver(
@@ -63,6 +84,22 @@ void useConnection(String connection) {
         'api': AuthGuard(
           driver: driver(null),
           provider: AuthProvider(model: () => FakeUser()),
+        ),
+        'api2': AuthGuard(
+          driver: driver(null),
+          provider: AuthProvider(model: () => FakeUser()),
+        ),
+        'renamed': AuthGuard(
+          driver: AccessTokenAuthDriver(
+            table: table,
+            connection: connection,
+            type: 'api',
+          ),
+          provider: AuthProvider(model: () => FakeUser()),
+        ),
+        'text': AuthGuard(
+          driver: driver(null),
+          provider: AuthProvider(model: () => TextUser()),
         ),
         'short': AuthGuard(
           driver: driver(const Duration(hours: 1)),
@@ -116,6 +153,7 @@ void tests(String connection) {
         .getDBDriver(connection)
         .execute('DELETE FROM $table');
     users.clear();
+    textUsers.clear();
     admins.clear();
     alice = users[1] = FakeUser(1, 'alice@dox.dev', Hash.make('a', rounds: 4));
     bob = users[2] = FakeUser(2, 'bob@dox.dev', Hash.make('b', rounds: 4));
@@ -179,6 +217,56 @@ void tests(String connection) {
       lessThan(const Duration(seconds: 5)),
     );
     expect((await verify(token.value, guard: 'short')).isLoggedIn(), isTrue);
+  });
+
+  test('a token can expire in 20 years (after 2038)', () async {
+    AccessToken token = await Auth().createAccessToken(
+      alice,
+      expiresIn: const Duration(days: 365 * 20),
+    );
+    DateTime want = DateTime.now().toUtc().add(const Duration(days: 365 * 20));
+    AccessToken listed = (await Auth().accessTokens(alice)).single;
+    expect(
+      listed.expiresAt!.difference(want).abs(),
+      lessThan(const Duration(seconds: 5)),
+    );
+    expect((await verify(token.value)).isLoggedIn(), isTrue);
+  });
+
+  test('a token of one guard fails on a guard with another type', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    AccessToken other = await Auth(guard: 'api2').createAccessToken(alice);
+    expect(token.type, 'api');
+    expect(other.type, 'api2');
+    expect((await verify(token.value)).isLoggedIn(), isTrue);
+    expect((await verify(token.value, guard: 'api2')).isLoggedIn(), isFalse);
+    expect((await verify(other.value)).isLoggedIn(), isFalse);
+    expect((await verify(other.value, guard: 'api2')).isLoggedIn(), isTrue);
+
+    // list and revoke see only the tokens of their own type
+    expect(await Auth(guard: 'api2').accessTokens(alice), hasLength(1));
+    expect(
+      await Auth(guard: 'api2').revokeAccessToken(alice, token.id),
+      isFalse,
+    );
+    expect(await Auth(guard: 'api2').revokeAllAccessTokens(alice), 1);
+    expect((await verify(token.value)).isLoggedIn(), isTrue);
+
+    // the type option keeps tokens working under another guard name
+    expect((await verify(token.value, guard: 'renamed')).isLoggedIn(), isTrue);
+  });
+
+  test('a text id with only digits stays text', () async {
+    TextUser user = textUsers['123'] = TextUser('123');
+    AccessToken token = await Auth(guard: 'text').createAccessToken(user);
+    expect(token.tokenableId, '"123"');
+    Auth auth = await verify(token.value, guard: 'text');
+    expect(TextUser.lastFindType, String);
+    expect(auth.user<TextUser>()?.id, '123');
+
+    AccessToken own = await Auth().createAccessToken(alice);
+    expect(own.tokenableId, '1');
+    expect(await Auth(guard: 'text').accessTokens(user), hasLength(1));
   });
 
   test('a revoked token fails', () async {

@@ -5,6 +5,8 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
 - New, opt-in: access tokens, like AdonisJS access tokens or Laravel Sanctum. Session and JWT guards do not change.
   - New `AccessTokenAuthDriver`. A token looks like `oat_<id>.<secret>`. The table keeps only a SHA-256 hash of the secret, checked in constant time. The plain token is shown once.
   - New `AccessTokenTables.up(schema)` and `down(schema)` for a migration. The default table is `auth_access_tokens`.
+  - Each token has a `type` (default: the guard name, or `AccessTokenAuthDriver(type: ...)`). A token works only on a guard with the same type.
+  - The time columns are `DATETIME` on MySQL, so a token can expire after 2038.
   - New `Auth().createAccessToken(user, name:, abilities:, expiresIn:)`, `accessTokens(user)`, `revokeAccessToken(user, id)`, `revokeAllAccessTokens(user)`, `tokenCan(ability)` and `currentAccessToken`.
   - `Auth().attempt(credentials)` gives an access token with this driver. `Auth().revokeToken(req)` revokes the access token of the request.
   - A bad, wrong, expired or revoked token gives no user (401). A database error does too, and it is reported.

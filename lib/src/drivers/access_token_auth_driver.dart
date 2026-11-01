@@ -30,6 +30,13 @@ class AccessTokenAuthDriver extends AuthDriver {
   /// AdonisJS. `createAccessToken(expiresIn: ...)` can set it per token.
   final Duration? expiresIn;
 
+  /// The `type` of the tokens of this driver, like `auth_token` in
+  /// AdonisJS. null (the default) is the guard name. A token only works
+  /// on a guard with the same type, so two access token guards on the
+  /// same tables do not take each other's tokens. Set it when you rename
+  /// a guard, so its old tokens keep working.
+  final String? type;
+
   /// bcrypt cost of the stored password hashes, for `Auth().attempt`.
   final int hashRounds;
 
@@ -37,6 +44,7 @@ class AccessTokenAuthDriver extends AuthDriver {
     this.table = AccessTokenTables.defaultTable,
     this.connection,
     this.expiresIn,
+    this.type,
     this.hashRounds = 10,
   }) {
     AuthDriver.prepareDummyHash(hashRounds);
@@ -84,13 +92,16 @@ class AccessTokenAuthDriver extends AuthDriver {
       if (row == null) return null;
       AccessToken found = AccessToken._fromRow(row);
       if (!Hash.equals(found._hash, _hashOf(match.group(2)!))) return null;
-      if (found.tokenableType != _type(guard)) return null;
+      if (found.tokenableType != _tokenableType(guard)) return null;
+      if (found.type != _typeOf(guard)) return null;
       DateTime now = DateTime.now().toUtc();
       DateTime? expiresAt = found.expiresAt;
       if (expiresAt != null && !now.isBefore(expiresAt)) return null;
 
       Model<dynamic> model = AuthEngine().guard(guard).provider.model();
-      Model<dynamic>? user = await model.find(_userId(found.tokenableId));
+      Object? id = _userId(found.tokenableId);
+      if (id == null) return null;
+      Model<dynamic>? user = await model.find(id);
       if (user == null) return null;
       found.user = user;
 
@@ -123,8 +134,9 @@ class AccessTokenAuthDriver extends AuthDriver {
     DateTime now = DateTime.now().toUtc();
     Duration? ttl = expiresIn ?? this.expiresIn;
     Map<String, dynamic> row = await _query.insert(<String, dynamic>{
-      'tokenable_type': _type(guard),
-      'tokenable_id': '${_idOf(user)}',
+      'tokenable_type': _tokenableType(guard),
+      'tokenable_id': _idOf(user),
+      'type': _typeOf(guard),
       'name': name,
       'hash': _hashOf(secret),
       'abilities': jsonEncode(abilities),
@@ -165,8 +177,9 @@ class AccessTokenAuthDriver extends AuthDriver {
     String guard,
   ) {
     return _query
-        .where('tokenable_type', _type(guard))
-        .where('tokenable_id', '${_idOf(user)}');
+        .where('tokenable_type', _tokenableType(guard))
+        .where('tokenable_id', _idOf(user))
+        .where('type', _typeOf(guard));
   }
 
   @override
@@ -189,19 +202,31 @@ class AccessTokenAuthDriver extends AuthDriver {
 
   /// The table of the users, so a token of one guard does not work for
   /// a guard with another user table.
-  static String _type(String guard) {
+  String _typeOf(String guard) => type ?? guard;
+
+  static String _tokenableType(String guard) {
     return AuthEngine().guard(guard).provider.model().tableName;
   }
 
-  static dynamic _idOf(Model<dynamic> user) {
-    dynamic id = user.toMap(original: true)[user.primaryKey];
-    if (id == null) throw ArgumentError('The user has no id. Save it first.');
-    return id;
+  /// The user id as JSON text: `1` for an int, `"1"` for a string. So
+  /// the id comes back with the type it had (see [_userId]).
+  static String _idOf(Model<dynamic> user) {
+    Object? id = user.toMap(original: true)[user.primaryKey];
+    if (id is! int && id is! String) {
+      throw ArgumentError('The user needs an int or a String id.');
+    }
+    return jsonEncode(id);
   }
 
-  /// ponytail: `tokenable_id` is text, so int and uuid ids both fit.
-  /// A number goes back to the database as an int.
-  static dynamic _userId(String id) => int.tryParse(id) ?? id;
+  /// The id of [_idOf] with its type, or null when the text is bad.
+  static Object? _userId(String id) {
+    try {
+      Object? value = jsonDecode(id);
+      return value is int || value is String ? value : null;
+    } on FormatException {
+      return null;
+    }
+  }
 
   static String _hashOf(String secret) {
     return sha256.convert(utf8.encode(secret)).toString();
@@ -214,6 +239,7 @@ class AccessToken {
     : id = _int(row['id']),
       tokenableType = _text(row['tokenable_type']),
       tokenableId = _text(row['tokenable_id']),
+      type = _text(row['type']),
       name = row['name'] == null ? null : _text(row['name']),
       _hash = _text(row['hash']),
       abilities = _abilities(row['abilities']),
@@ -224,7 +250,12 @@ class AccessToken {
 
   final int id;
   final String tokenableType;
+
+  /// The user id as JSON text, like `1` or `"abc"`.
   final String tokenableId;
+
+  /// The type of the token. See `AccessTokenAuthDriver.type`.
+  final String type;
   final String? name;
   final String _hash;
   final List<String> abilities;
@@ -252,6 +283,7 @@ class AccessToken {
     return <String, dynamic>{
       'id': id,
       'name': name,
+      'type': type,
       'abilities': abilities,
       'last_used_at': lastUsedAt?.toIso8601String(),
       'expires_at': expiresAt?.toIso8601String(),
@@ -317,12 +349,15 @@ class AccessTokenTables {
       t.id();
       t.string('tokenable_type');
       t.string('tokenable_id', 64);
+      t.string('type');
       t.string('name').nullable();
       t.string('hash', 64);
       t.text('abilities');
-      t.timestampTz('last_used_at').nullable();
-      t.timestampTz('expires_at').nullable();
-      t.timestamps();
+      // DATETIME on MySQL: TIMESTAMP stops at 2038
+      t.dateTimeTz('last_used_at').nullable();
+      t.dateTimeTz('expires_at').nullable();
+      t.dateTimeTz('created_at').nullable();
+      t.dateTimeTz('updated_at').nullable();
       t.index(<String>['tokenable_type', 'tokenable_id']);
     });
   }

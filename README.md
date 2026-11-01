@@ -128,7 +128,7 @@ A token looks like `oat_12.<secret>`. The table keeps only a SHA-256 hash of the
 
 ```dart
 'api': AuthGuard(
-  driver: AccessTokenAuthDriver(), // table: 'auth_access_tokens', expiresIn: null (no end)
+  driver: AccessTokenAuthDriver(), // table: 'auth_access_tokens', expiresIn: null (no end), type: the guard name
   provider: AuthProvider(model: () => User()),
 ),
 ```
@@ -190,6 +190,8 @@ auth.currentAccessToken; // the AccessToken of this request
 ```
 
 - A token fails when its format is bad, the secret is wrong, it is expired, it was revoked (the row is deleted), its user is gone, or it was made for a guard with another user table. A database error also fails the check (401), and it goes to `AppConfig.exceptionHandler`.
+- Each token has a `type`. By default it is the guard name. A token works only on a guard with the same type, so two access token guards do not take each other's tokens. If you rename a guard, set `AccessTokenAuthDriver(type: 'old-name')` to keep its tokens working.
+- When you delete a user, call `revokeAllAccessTokens(user)` too. Then old tokens can never match a new user with the same id.
 - `tokenCan` is false when there is no access token, so a session or JWT login never passes it.
 - `last_used_at` is written at most once a minute per token.
 - `Auth().login(user)` throws a `StateError` with this driver. Use `createAccessToken`.
