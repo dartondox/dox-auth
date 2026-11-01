@@ -1,6 +1,6 @@
 name: dox_auth
 description: Authentication package for dox framework with JWT and session drivers.
-version: 3.0.1
+version: 3.0.2
 repository: https://github.com/dartondox/dox-auth
 homepage: https://dartondox.dev
 

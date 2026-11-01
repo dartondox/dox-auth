@@ -1,4 +1,4 @@
-## Unreleased
+## 3.0.2
 
 - New: gates and policies, for what a user may do.
   - `Gate.define('update-post', (User user, Post post) => ...)` adds a rule. The user and subject types come from the function.
