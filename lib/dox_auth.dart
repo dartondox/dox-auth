@@ -7,6 +7,7 @@ export 'src/auth_engine.dart';
 export 'src/auth_exception.dart';
 export 'src/auth_middleware.dart';
 export 'src/can_middleware.dart';
+export 'src/drivers/access_token_auth_driver.dart';
 export 'src/drivers/jwt_auth_driver.dart';
 export 'src/drivers/session_auth_driver.dart';
 export 'src/gate.dart';

@@ -77,6 +77,7 @@ Route.get('/dashboard', <dynamic>[AuthMiddleware(redirectTo: '/login'), pageCont
 
 - JWT driver (`JwtAuthDriver`) with a secret, algorithm, expiry and issuer.
 - Session driver (`SessionAuthDriver`) for web pages. Login and logout give the session a new id.
+- Access token driver (`AccessTokenAuthDriver`): opaque tokens in a database table, with abilities. You can revoke one token or all tokens of a user.
 - `Auth().attempt(credentials)` finds the user and checks the bcrypt hash.
 - `Auth().login(user)` gives a token with no password check.
 - Custom drivers, like an API key guard. `Auth().setUser(req, user)` sets the user from your own middleware.
@@ -116,6 +117,83 @@ await Auth().forgetUser(id);       // drop the user from `userCacheTtl`, eg. aft
 - Tokens made before 3.0.3 have no `jti`. They still work until they expire, so an upgrade logs no one out. `revokeToken` can not put them on the deny-list. `revokeAllTokens` stops them when they have an `iat` claim (tokens from `JwtAuthDriver` do).
 - The `revokeAllTokens` time comes from the server clock. Keep server clocks in sync (NTP). If the server that made a token has a clock that is ahead, its old tokens can pass the check.
 With the default `cookie` session driver, all session data sits in the cookie. So an old copy of the cookie still works after logout. If logout must really end old cookies, use the `cache` session driver, like `SessionConfig(driver: 'cache', store: 'redis')`.
+
+### Access tokens
+
+Opaque API tokens that you can revoke at any time, like AdonisJS access tokens or Laravel Sanctum. It is opt-in: session and JWT guards do not change.
+
+A token looks like `oat_12.<secret>`. The table keeps only a SHA-256 hash of the secret. The plain token is shown once, when you make it. A token works until it expires or you revoke it.
+
+#### 1. Guard
+
+```dart
+'api': AuthGuard(
+  driver: AccessTokenAuthDriver(), // table: 'auth_access_tokens', expiresIn: null (no end)
+  provider: AuthProvider(model: () => User()),
+),
+```
+
+#### 2. Table
+
+Add a migration in `db/migration`. `AccessTokenTables` makes the `auth_access_tokens` table.
+
+`db/migration/2026_11_02_000000000_create_access_tokens_table.dart`:
+
+```dart
+// ignore_for_file: file_names
+import 'package:dox_auth/dox_auth.dart';
+import 'package:dox_migration/dox_migration.dart';
+
+/// The auth_access_tokens table of dox_auth.
+class CreateAccessTokensTable extends Migration {
+  @override
+  Future<void> up(Schema schema) async {
+    await AccessTokenTables.up(schema);
+  }
+
+  @override
+  Future<void> down(Schema schema) async {
+    await AccessTokenTables.down(schema);
+  }
+}
+```
+
+Then run `dox migrate`. When the driver uses another table (`AccessTokenAuthDriver(table: 'tokens')`), pass the same name: `AccessTokenTables.up(schema, table: 'tokens')`.
+
+#### 3. Use it
+
+```dart
+// log in: gives a new token with all abilities, or null
+String? token = await Auth(guard: 'api').attempt(credentials);
+
+// or make one for a user
+AccessToken token = await Auth(guard: 'api').createAccessToken(
+  user,
+  name: 'cli',
+  abilities: <String>['posts:read'], // default: ['*'] (all)
+  expiresIn: const Duration(days: 30), // default: the driver expiresIn
+);
+return <String, dynamic>{'token': token.value}; // shown once
+
+await Auth(guard: 'api').accessTokens(user);            // list, newest first
+await Auth(guard: 'api').revokeAccessToken(user, id);   // false when not a token of this user
+await Auth(guard: 'api').revokeAllAccessTokens(user);   // eg. after a password change
+await Auth(guard: 'api').revokeToken(req);              // logout: revoke the token of this request
+```
+
+The client sends `Authorization: Bearer oat_12.<secret>`. Protect the route with `AuthMiddleware(guard: 'api')`. Then check abilities:
+
+```dart
+Auth auth = req.auth as Auth;
+if (!auth.tokenCan('posts:write')) throw ForbiddenHttpException();
+auth.currentAccessToken; // the AccessToken of this request
+```
+
+- A token fails when its format is bad, the secret is wrong, it is expired, it was revoked (the row is deleted), its user is gone, or it was made for a guard with another user table. A database error also fails the check (401), and it goes to `AppConfig.exceptionHandler`.
+- `tokenCan` is false when there is no access token, so a session or JWT login never passes it.
+- `last_used_at` is written at most once a minute per token.
+- `Auth().login(user)` throws a `StateError` with this driver. Use `createAccessToken`.
+- Expired tokens stay in the table. Delete old rows with a scheduled job if you need to.
 
 ### Login throttle
 

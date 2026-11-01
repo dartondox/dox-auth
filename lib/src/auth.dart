@@ -2,6 +2,7 @@
 import 'dart:io';
 
 import 'package:dox_auth/src/auth_engine.dart';
+import 'package:dox_auth/src/drivers/access_token_auth_driver.dart';
 import 'package:dox_auth/src/drivers/jwt_auth_driver.dart';
 import 'package:dox_auth/src/drivers/session_auth_driver.dart';
 import 'package:dox_auth/src/interfaces.dart';
@@ -61,9 +62,77 @@ class Auth implements IAuth {
     AuthEngine().init(authConfig);
   }
 
+  /// The access token of this request, with `AccessTokenAuthDriver`.
+  /// null with other drivers, or when there is no login.
+  AccessToken? get currentAccessToken => _accessToken;
+
+  AccessToken? _accessToken;
+
   @override
   Future<void> verifyToken(IDoxRequest req) async {
-    _userData = await _driver.verifyToken(req, _guard);
+    AuthDriver driver = _driver;
+    if (driver is AccessTokenAuthDriver) {
+      String? token = JwtAuthDriver.bearerToken(req);
+      _accessToken = token == null ? null : await driver.check(token, _guard);
+      _userData = _accessToken?.user;
+      return;
+    }
+    _userData = await driver.verifyToken(req, _guard);
+  }
+
+  /// true when the access token of this request has [ability] (or `*`).
+  /// false when there is no access token, so a session or JWT login
+  /// never passes this check.
+  /// ```
+  /// if (!(req.auth as Auth).tokenCan('posts:write')) {
+  ///   throw ForbiddenHttpException();
+  /// }
+  /// ```
+  bool tokenCan(String ability) => _accessToken?.can(ability) ?? false;
+
+  /// A new access token for [user]. Show `token.value` to the user
+  /// once: only its hash is kept. [abilities] default to `['*']` (all).
+  /// [expiresIn] default to `AccessTokenAuthDriver.expiresIn`.
+  /// Needs `AccessTokenAuthDriver`.
+  /// ```
+  /// AccessToken token = await Auth(guard: 'api').createAccessToken(
+  ///   user,
+  ///   name: 'cli',
+  ///   abilities: ['posts:read'],
+  ///   expiresIn: Duration(days: 30),
+  /// );
+  /// return {'token': token.value};
+  /// ```
+  Future<AccessToken> createAccessToken(
+    Model<dynamic> user, {
+    String? name,
+    List<String> abilities = const <String>['*'],
+    Duration? expiresIn,
+  }) {
+    return _accessTokenDriver.create(
+      user,
+      _guard,
+      name: name,
+      abilities: abilities,
+      expiresIn: expiresIn,
+    );
+  }
+
+  /// All access tokens of [user], newest first. Needs `AccessTokenAuthDriver`.
+  Future<List<AccessToken>> accessTokens(Model<dynamic> user) {
+    return _accessTokenDriver.all(user, _guard);
+  }
+
+  /// Revoke (delete) the access token [id] of [user]. false when [user]
+  /// has no token with this id. Needs `AccessTokenAuthDriver`.
+  Future<bool> revokeAccessToken(Model<dynamic> user, int id) {
+    return _accessTokenDriver.revoke(user, _guard, id);
+  }
+
+  /// Revoke (delete) all access tokens of [user], eg. after a password
+  /// change. Gives how many were deleted. Needs `AccessTokenAuthDriver`.
+  Future<int> revokeAllAccessTokens(Model<dynamic> user) {
+    return _accessTokenDriver.revokeAll(user, _guard);
   }
 
   /// The user of [token] (a JWT), or null. For code with no request,
@@ -110,8 +179,14 @@ class Auth implements IAuth {
   /// (`Auth(ip: req.ip())`), so the count is per account and ip.
   /// Without an ip, the count is per account only, so anyone can lock
   /// an account for `decay`.
+  /// With `AccessTokenAuthDriver`, it gives a new access token with all
+  /// abilities (see [createAccessToken]).
   Future<String?> attempt(Map<String, dynamic> credentials) async {
     _userData = await _throttled(credentials, ip);
+    Model<dynamic>? user = _userData;
+    if (user != null && _driver is AccessTokenAuthDriver) {
+      return (await createAccessToken(user)).value;
+    }
     return _createToken();
   }
 
@@ -196,13 +271,31 @@ class Auth implements IAuth {
     _sessionDriver.logout(req);
   }
 
-  /// Revoke the bearer token of [req] (a JWT logout). It is kept on a
-  /// deny-list in the cache until it expires. Needs `JwtAuthDriver` with
-  /// `revocation: true`. A request with no token does nothing.
+  /// Revoke the bearer token of [req] (a token logout).
+  /// - `JwtAuthDriver` (needs `revocation: true`): the token is kept on
+  ///   a deny-list in the cache until it expires.
+  /// - `AccessTokenAuthDriver`: the token row is deleted. A token that
+  ///   does not check out does nothing.
+  ///
+  /// A request with no token does nothing.
   /// ```
   /// await Auth().revokeToken(req);
   /// ```
   Future<void> revokeToken(IDoxRequest req) async {
+    AuthDriver current = _driver;
+    if (current is AccessTokenAuthDriver) {
+      String? token = JwtAuthDriver.bearerToken(req);
+      AccessToken? found = token == null
+          ? null
+          : await current.check(token, _guard);
+      Model<dynamic>? user = found?.user;
+      if (found != null && user != null) {
+        await current.revoke(user, _guard, found.id);
+      }
+      _userData = null;
+      _accessToken = null;
+      return;
+    }
     JwtAuthDriver driver = _jwtDriver;
     _userData = null;
     String? token = JwtAuthDriver.bearerToken(req);
@@ -228,6 +321,14 @@ class Auth implements IAuth {
   /// ```
   Future<void> forgetUser(dynamic id) {
     return _jwtDriver.forgetUser(id, _guard);
+  }
+
+  AccessTokenAuthDriver get _accessTokenDriver {
+    AuthDriver driver = _driver;
+    if (driver is AccessTokenAuthDriver) return driver;
+    throw StateError(
+      "The auth guard '$_guard' does not use AccessTokenAuthDriver.",
+    );
   }
 
   JwtAuthDriver get _jwtDriver {

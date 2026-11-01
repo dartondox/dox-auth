@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:dox_auth/src/auth_engine.dart';
+import 'package:dox_core/dox_core.dart' show Dox;
 import 'package:dox_core/utils/hash.dart';
 import 'package:dox_orm/dox_orm.dart';
 
@@ -46,6 +49,18 @@ abstract class AuthDriver {
   /// A token for the user. `Auth` passes `user.toJson()`, like in 3.0.2.
   /// When the primary key is hidden, the id is added as `sub`.
   String? createToken(Map<String, dynamic>? userPayload, String guard);
+
+  /// Sends [error] to `AppConfig.exceptionHandler`, so it shows up in
+  /// the log or the error tracker of the app. Before Dox is set up, it
+  /// goes to stderr. For an error while a token is checked.
+  static void reportError(Object error, StackTrace stackTrace) {
+    try {
+      Dox().config.exceptionHandler.report(error, stackTrace);
+    } catch (_) {
+      stderr.writeln('[dox] dox_auth verifyToken failed: $error');
+      stderr.writeln(stackTrace);
+    }
+  }
 
   /// checked when no user is found, so a login takes as long for an
   /// unknown email as for a wrong password. One per bcrypt cost.
