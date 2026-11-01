@@ -515,6 +515,25 @@ void main() {
       expect(await loggedIn(token), isFalse);
     });
 
+    test('a cache that can not be read rejects the token', () async {
+      Auth.initialize(
+        AuthConfig(
+          defaultGuard: 'web',
+          guards: <String, AuthGuard>{
+            'web': AuthGuard(
+              driver: JwtAuthDriver(
+                secret: SecretKey(secret),
+                revocationStore: 'no-such-store',
+              ),
+              provider: AuthProvider(model: () => FakeUser()),
+            ),
+          },
+        ),
+      );
+      String token = Auth().login(users[1]!)!;
+      expect(await loggedIn(token), isFalse);
+    });
+
     test('revoke methods need a JWT guard', () {
       Auth.initialize(
         AuthConfig(

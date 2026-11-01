@@ -5,8 +5,8 @@
   - `Auth().logout(req)` now works on a JWT guard: it revokes the bearer token of the request until it expires. It now returns a `Future`, so `await` it. It takes an `IDoxRequest`.
   - New `Auth().revokeAllTokens(id)`: all tokens of the user made before now stop working (eg. after a password change or a ban).
   - New `Auth().forgetUser(id)`: drops the user from the `userCacheTtl` cache on all isolates and servers that share the cache.
-  - New `JwtAuthDriver(cacheStore: ...)` picks the cache store. Use a shared store like `redis` with many isolates or servers.
-  - Breaking: `verifyToken` reads the cache once per request, so the app cache must work. A token with no `jti` is rejected.
+  - New `JwtAuthDriver(revocationStore: ...)` picks the cache store. Give auth its own store and never flush it: a flush, or a full `memory` store with `max_size`, brings revoked tokens back. Use a shared store like `redis` with many isolates or servers.
+  - Breaking: `verifyToken` reads this store on every request, also with `userCacheTtl`. On the default `file` store this is 2 or 3 file reads per request. Use `memory` for one isolate, or `redis` for many. If the store can not be read, the token is rejected. A token with no `jti` is rejected.
 
 ## 3.0.2
 

@@ -107,7 +107,11 @@ class Auth implements IAuth {
       await driver.revokeToken(header.replaceFirst('Bearer ', ''), _guard);
       return;
     }
-    _sessionDriver.logout(req as DoxRequest);
+    SessionAuthDriver session = _sessionDriver;
+    if (req is! DoxRequest) {
+      throw StateError('A session logout needs a DoxRequest.');
+    }
+    session.logout(req);
   }
 
   /// Revoke all tokens of the user [id] made before now, on all

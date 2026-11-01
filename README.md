@@ -101,8 +101,10 @@ await Auth().forgetUser(id);       // drop the user from `userCacheTtl`, eg. aft
 
 - A revoked token stays on the deny-list only until it expires.
 - `revokeAllTokens` keeps tokens made after the call. A token made in the same second as the call also still works.
-- `verifyToken` reads the cache once per request. Pick the store with `JwtAuthDriver(cacheStore: 'redis')`. With many isolates or servers, use a shared store like `redis`. A `memory` store is seen by one isolate only.
-- When the cache can not be read, the token is rejected.
+- Give auth its own store, and never flush it. Pick it with `JwtAuthDriver(revocationStore: 'auth')`, for example a `redis` store with its own prefix. A flush of this store (`Cache().flush()`), or a `memory` store with `max_size` that drops old keys, brings revoked tokens back until they expire. With no `revocationStore`, the default app store is used.
+- Cost: `verifyToken` reads this store on every request, also with `userCacheTtl`. It is one `many()` call: one round trip on `redis` and `memory`. On the `file` store (the default) it is 2 or 3 file reads per request. Use `memory` for one isolate, or `redis` for many isolates or servers. A `memory` store is seen by one isolate only.
+- When the store can not be read, the token is rejected.
+- The `revokeAllTokens` time comes from the server clock. Keep server clocks in sync (NTP). If the server that made a token has a clock that is ahead, its old tokens can pass the check.
 With the default `cookie` session driver, all session data sits in the cookie. So an old copy of the cookie still works after logout. If logout must really end old cookies, use the `cache` session driver, like `SessionConfig(driver: 'cache', store: 'redis')`.
 
 ## Custom guard (API key)

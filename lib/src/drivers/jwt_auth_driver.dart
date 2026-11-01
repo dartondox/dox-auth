@@ -71,11 +71,19 @@ class JwtAuthDriver extends AuthDriver {
   /// object, so do not change it per request.
   final Duration? userCacheTtl;
 
-  /// The store from `AppConfig.cache` that keeps revoked tokens. null
-  /// is the default store. `verifyToken` reads it once per request.
-  /// With many isolates or servers, use a shared store like `redis`, so
-  /// a logout on one server is seen on all of them.
-  final String? cacheStore;
+  /// The name of the store in `AppConfig.cache` that keeps revoked
+  /// tokens, the `revokeAllTokens` times and the `forgetUser` times.
+  /// null is the default store of the app.
+  ///
+  /// Give auth its own store and never flush it. A flush of this store,
+  /// or a `memory` store with `max_size` that drops old keys, brings
+  /// revoked tokens back until they expire.
+  ///
+  /// `verifyToken` reads this store on each request with one `many()`
+  /// call: one round trip on `redis` and `memory`, but one file read per
+  /// key (2 or 3) on the `file` store. Use `memory` for one isolate, or
+  /// a shared store like `redis` for many isolates or servers.
+  final String? revocationStore;
 
   /// most users kept by [userCacheTtl]. When full, the cache is cleared.
   static const int _userCacheSize = 1000;
@@ -95,7 +103,7 @@ class JwtAuthDriver extends AuthDriver {
     this.hashRounds = 10,
     this.userCacheTtl,
     this.previousSecrets,
-    this.cacheStore,
+    this.revocationStore,
   }) {
     /// with an empty key anyone can sign a token for any user
     JWTKey key = secret;
@@ -230,7 +238,7 @@ class JwtAuthDriver extends AuthDriver {
     return _verify(token, guard).payload as Map<String, dynamic>;
   }
 
-  CacheStore get _cache => Dox().cache.store(cacheStore);
+  CacheStore get _cache => Dox().cache.store(revocationStore);
 
   static String _revokedKey(String jti) => 'auth:revoked:$jti';
 
@@ -285,7 +293,7 @@ class JwtAuthDriver extends AuthDriver {
   }
 
   /// Drop the user [id] from [userCacheTtl] on all isolates and
-  /// servers that share [cacheStore], so the next request loads it
+  /// servers that share [revocationStore], so the next request loads it
   /// from the database (eg. after a ban or a delete).
   Future<void> forgetUser(dynamic id, String guard) async {
     String userKey = '$guard:$id';
