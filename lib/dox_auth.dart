@@ -11,4 +11,5 @@ export 'src/drivers/jwt_auth_driver.dart';
 export 'src/drivers/session_auth_driver.dart';
 export 'src/gate.dart';
 export 'src/interfaces.dart';
+export 'src/login_throttle.dart';
 export 'src/policy.dart';

@@ -3,6 +3,7 @@ import 'package:dox_auth/src/auth_engine.dart';
 import 'package:dox_auth/src/drivers/jwt_auth_driver.dart';
 import 'package:dox_auth/src/drivers/session_auth_driver.dart';
 import 'package:dox_auth/src/interfaces.dart';
+import 'package:dox_auth/src/login_throttle.dart';
 import 'package:dox_core/dox_core.dart';
 import 'package:dox_orm/dox_orm.dart';
 
@@ -14,7 +15,14 @@ class Auth implements IAuth {
   /// ```
   final String? guard;
 
-  Auth({this.guard});
+  /// The client ip, for [throttle]. Only `attempt` uses it;
+  /// `attemptSession` reads it from the request.
+  /// ```
+  /// Auth(ip: req.ip()).attempt(credentials);
+  /// ```
+  final String? ip;
+
+  Auth({this.guard, this.ip});
 
   /// user data
   Model<dynamic>? _userData;
@@ -42,9 +50,44 @@ class Auth implements IAuth {
     return _userData as T?;
   }
 
+  /// The login throttle for `attempt` and `attemptSession`.
+  /// Off (`null`) by default, like in 3.0.2. See [LoginThrottle].
+  /// ```
+  /// Auth.throttle = LoginThrottle(maxAttempts: 5, decay: Duration(minutes: 1));
+  /// ```
+  static LoginThrottle? throttle;
+
+  /// Check the credentials and give a token, or null when they are wrong.
+  /// With [throttle] on, make the `Auth` with the client [ip]
+  /// (`Auth(ip: req.ip())`), so the count is per account and ip.
+  /// Without an ip, the count is per account only, so anyone can lock
+  /// an account for `decay`.
   Future<String?> attempt(Map<String, dynamic> credentials) async {
-    _userData = await _driver.attempt(credentials, _guard);
+    _userData = await _throttled(credentials, ip);
     return _createToken();
+  }
+
+  /// [AuthDriver.attempt], with [throttle] when it is on.
+  Future<Model<dynamic>?> _throttled(
+    Map<String, dynamic> credentials,
+    String? ip,
+  ) async {
+    AuthDriver driver = _driver;
+    LoginThrottle? limit = throttle;
+    if (limit == null) return driver.attempt(credentials, _guard);
+
+    List<String> fields = AuthEngine().guard(_guard).provider.identifierFields;
+    String key = LoginThrottle.key(_guard, <Object?>[
+      for (String field in fields) credentials[field],
+    ], ip);
+    await limit.check(key);
+    Model<dynamic>? user = await driver.attempt(credentials, _guard);
+    if (user == null) {
+      await limit.hit(key);
+    } else {
+      await limit.clear(key);
+    }
+    return user;
   }
 
   String? login(Model<dynamic> user) {
@@ -77,7 +120,7 @@ class Auth implements IAuth {
     Map<String, dynamic> credentials,
   ) async {
     SessionAuthDriver driver = _sessionDriver;
-    _userData = await driver.attempt(credentials, _guard);
+    _userData = await _throttled(credentials, req.ip());
     Model<dynamic>? user = _userData;
     if (user == null) return false;
     driver.login(req, user, _guard);

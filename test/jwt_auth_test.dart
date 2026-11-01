@@ -1096,6 +1096,82 @@ void main() {
     });
   });
 
+  group('Login throttle |', () {
+    Map<String, dynamic> wrong = <String, dynamic>{
+      'email': 'a@dox.dev',
+      'password': 'nope',
+    };
+    Map<String, dynamic> right = <String, dynamic>{
+      'email': 'a@dox.dev',
+      'password': 'secret',
+    };
+
+    setUp(() {
+      users[1] = FakeUser(1, 'a@dox.dev', Hash.make('secret', rounds: 4));
+      initWith(JwtAuthDriver(secret: SecretKey(secret), hashRounds: 4));
+    });
+    tearDown(() => Auth.throttle = null);
+
+    test('is off by default, like 3.0.2', () async {
+      for (int i = 0; i < 10; i++) {
+        expect(await Auth(ip: '1.1.1.1').attempt(wrong), isNull);
+      }
+      expect(await Auth(ip: '1.1.1.1').attempt(right), isNotNull);
+    });
+
+    test('blocks the account and ip after maxAttempts failures', () async {
+      Auth.throttle = LoginThrottle(maxAttempts: 3);
+      for (int i = 0; i < 3; i++) {
+        expect(await Auth(ip: '1.1.1.1').attempt(wrong), isNull);
+      }
+      // the right password is blocked too, until the decay ends
+      await expectLater(
+        Auth(ip: '1.1.1.1').attempt(right),
+        throwsA(
+          isA<LoginThrottledException>()
+              .having((LoginThrottledException e) => e.code, 'code', 429)
+              .having(
+                (LoginThrottledException e) => e.retryAfter.inSeconds,
+                'retryAfter',
+                inInclusiveRange(55, 60),
+              ),
+        ),
+      );
+      // the case of the email does not matter
+      await expectLater(
+        Auth(ip: '1.1.1.1').attempt(<String, dynamic>{
+          'email': ' A@DOX.dev',
+          'password': 'secret',
+        }),
+        throwsA(isA<LoginThrottledException>()),
+      );
+      // another ip is not blocked
+      expect(await Auth(ip: '2.2.2.2').attempt(right), isNotNull);
+    });
+
+    test('a good login clears the count', () async {
+      Auth.throttle = LoginThrottle(maxAttempts: 2);
+      expect(await Auth(ip: '1.1.1.1').attempt(wrong), isNull);
+      expect(await Auth(ip: '1.1.1.1').attempt(right), isNotNull);
+      expect(await Auth(ip: '1.1.1.1').attempt(wrong), isNull);
+      expect(await Auth(ip: '1.1.1.1').attempt(right), isNotNull);
+    });
+
+    test('the block ends after decay', () async {
+      Auth.throttle = LoginThrottle(
+        maxAttempts: 1,
+        decay: Duration(milliseconds: 300),
+      );
+      expect(await Auth(ip: '1.1.1.1').attempt(wrong), isNull);
+      await expectLater(
+        Auth(ip: '1.1.1.1').attempt(right),
+        throwsA(isA<LoginThrottledException>()),
+      );
+      await Future<void>.delayed(Duration(milliseconds: 1100));
+      expect(await Auth(ip: '1.1.1.1').attempt(right), isNotNull);
+    });
+  });
+
   group('verifyToken errors |', () {
     late RecordingExceptionHandler handler;
 

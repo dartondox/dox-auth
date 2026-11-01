@@ -117,6 +117,25 @@ await Auth().forgetUser(id);       // drop the user from `userCacheTtl`, eg. aft
 - The `revokeAllTokens` time comes from the server clock. Keep server clocks in sync (NTP). If the server that made a token has a clock that is ahead, its old tokens can pass the check.
 With the default `cookie` session driver, all session data sits in the cookie. So an old copy of the cookie still works after logout. If logout must really end old cookies, use the `cache` session driver, like `SessionConfig(driver: 'cache', store: 'redis')`.
 
+### Login throttle
+
+Limit failed logins per account and ip. It is off by default. Turn it on once at start, for example in a provider:
+
+```dart
+Auth.throttle = LoginThrottle(maxAttempts: 5, decay: Duration(minutes: 1));
+
+// JWT: pass the client ip
+String? token = await Auth(ip: req.ip()).attempt(credentials);
+
+// session: the ip comes from the request
+bool ok = await Auth().attemptSession(req, credentials);
+```
+
+- After `maxAttempts` failed logins for the same login field (eg. the email) and ip, the next try throws `LoginThrottledException` (429) until `decay` has passed. `retryAfter` says how long to wait.
+- A good login clears the count. The login field is trimmed and lower case, so `A@x.com` and `a@x.com` share one count.
+- The counts live in the app cache. Pick a store with `LoginThrottle(store: 'redis')`. Use a shared store like `redis` for many isolates or servers.
+- Without an ip, `attempt` counts per account only. Then anyone can lock an account for `decay`, so pass the ip.
+
 ## Custom guard (API key)
 
 You can check the user in your own way, like an API key in the header.
