@@ -1157,6 +1157,23 @@ void main() {
       expect(await Auth(ip: '1.1.1.1').attempt(right), isNotNull);
     });
 
+    test('a count with no expiry never locks the account', () async {
+      Auth.throttle = LoginThrottle(maxAttempts: 2);
+      String key = LoginThrottle.key('web', <Object?>['a@dox.dev'], '1.1.1.1');
+      CacheStore store = Dox().cache.store();
+      int past = DateTime.now().millisecondsSinceEpoch - 1000;
+      // what a key that expires between two cache steps can leave behind:
+      // a count with no ttl, and no end, or an end in the past
+      for (Object value in <Object>[99, '99', '99|$past']) {
+        await store.forever(key, value);
+        expect(await Auth(ip: '1.1.1.1').attempt(right), isNotNull);
+      }
+      // a failure after a stale count starts a new window with a ttl
+      await store.forever(key, '99|$past');
+      expect(await Auth(ip: '1.1.1.1').attempt(wrong), isNull);
+      expect(await Auth(ip: '1.1.1.1').attempt(right), isNotNull);
+    });
+
     test('the block ends after decay', () async {
       Auth.throttle = LoginThrottle(
         maxAttempts: 1,

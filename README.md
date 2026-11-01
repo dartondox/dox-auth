@@ -119,7 +119,7 @@ With the default `cookie` session driver, all session data sits in the cookie. S
 
 ### Login throttle
 
-Limit failed logins per account and ip. It is off by default. Turn it on once at start, for example in a provider:
+Limit failed logins per account and ip. It is off by default. Turn it on in the `register` or `boot` of a provider. `Auth.throttle` is a static, so each isolate has its own copy. If you set it in `main()` before the server starts, only the first isolate throttles.
 
 ```dart
 Auth.throttle = LoginThrottle(maxAttempts: 5, decay: Duration(minutes: 1));
@@ -135,6 +135,8 @@ bool ok = await Auth().attemptSession(req, credentials);
 - A good login clears the count. The login field is trimmed and lower case, so `A@x.com` and `a@x.com` share one count.
 - The counts live in the app cache. Pick a store with `LoginThrottle(store: 'redis')`. Use a shared store like `redis` for many isolates or servers.
 - Without an ip, `attempt` counts per account only. Then anyone can lock an account for `decay`, so pass the ip.
+- `attemptSession` sends a `Retry-After` header with the 429. `attempt` has no request, so catch `LoginThrottledException` and set the header from `retryAfter` if you need it.
+- Known limits: a burst of parallel tries can get a few more than `maxAttempts`, because the check and the count are separate cache steps. With more than one login field (eg. email and username), each set of fields that a client sends gets its own count.
 
 ### Password hash cost
 

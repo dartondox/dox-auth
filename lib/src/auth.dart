@@ -1,4 +1,6 @@
 // ignore_for_file: depend_on_referenced_packages
+import 'dart:io';
+
 import 'package:dox_auth/src/auth_engine.dart';
 import 'package:dox_auth/src/drivers/jwt_auth_driver.dart';
 import 'package:dox_auth/src/drivers/session_auth_driver.dart';
@@ -144,7 +146,15 @@ class Auth implements IAuth {
     Map<String, dynamic> credentials,
   ) async {
     SessionAuthDriver driver = _sessionDriver;
-    _userData = await _throttled(credentials, req.ip());
+    try {
+      _userData = await _throttled(credentials, req.ip());
+    } on LoginThrottledException catch (error) {
+      req.httpRequest.response.headers.set(
+        HttpHeaders.retryAfterHeader,
+        (error.retryAfter.inMilliseconds / 1000).ceil(),
+      );
+      rethrow;
+    }
     Model<dynamic>? user = _userData;
     if (user == null) return false;
     driver.login(req, user, _guard);

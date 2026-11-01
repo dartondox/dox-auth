@@ -133,7 +133,9 @@ void main() {
     };
     expect((await client.post('/login', body: wrong)).body, 'wrong');
     expect((await client.post('/login', body: wrong)).body, 'wrong');
-    expect((await client.post('/login', body: wrong)).status, 429);
+    TestResponse blocked = await client.post('/login', body: wrong);
+    expect(blocked.status, 429);
+    expect(int.parse(blocked.header('retry-after')!), inInclusiveRange(1, 60));
   });
 
   test('redirectTo sends a guest to the login page', () async {
