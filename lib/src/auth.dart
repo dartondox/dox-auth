@@ -146,9 +146,6 @@ class Auth implements IAuth {
     Map<String, dynamic> credentials,
   ) async {
     SessionAuthDriver driver = _sessionDriver;
-    // fail early with the clear "no session" error, before the password
-    // check, so a wrong password does not hide a missing SessionMiddleware
-    req.session;
     try {
       _userData = await _throttled(credentials, req.ip());
     } on LoginThrottledException catch (error) {
