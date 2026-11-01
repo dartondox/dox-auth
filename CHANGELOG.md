@@ -1,17 +1,20 @@
 ## Unreleased
 
-No breaking change. Apps on 3.0.2 keep working, and no user is logged out.
+No breaking change for code that calls dox_auth. Apps on 3.0.2 keep working, and no user is logged out.
 
-- Security: a new JWT holds only the user id, in the `sub` claim. Before, it held every visible column of the user, and anyone can read a JWT payload. Do not read user fields from the token payload; load the user (`req.auth?.user<User>()`).
-- Tokens made before this version (the whole user, no `sub`, no `jti`) still work until they expire. The user id comes from `sub`, or from the primary key in the old payload.
+- By default a JWT holds the same data as in 3.0.2: the user (`toJson()`, hidden fields left out), plus `iat`, `exp` and a new `jti`. A front end that reads user fields from the token still works.
+- Security, opt-in: `JwtAuthDriver(minimalPayload: true)` puts only the user id (the `sub` claim) in new tokens. This is the safer choice: anyone can read a JWT payload, and a small token is cheaper to send. Load the user with `req.auth?.user<User>()`, not from the token.
+- The user id comes from the primary key, like in 3.0.2. Only a small token (a `jti` and no primary key) reads `sub`. A user column named `sub` (eg. from an OAuth login) is never taken as the id.
+- Tokens made before this version (no `jti`) still work until they expire, exactly like in 3.0.2.
 - Security: a JWT can now be revoked. Each new token has a random `jti`. The JWT driver keeps revoked tokens in the app cache.
-  - `Auth().logout(req)` now works on a JWT guard: it revokes the bearer token of the request until it expires. It returns a `Future`; `await` it to be sure the token is revoked. A session logout still happens at once, so old code that does not `await` it still works. It takes an `IDoxRequest`, and a `DoxRequest` still fits.
-  - New `Auth().revokeAllTokens(id)`: all tokens of the user made before now stop working (eg. after a password change or a ban). An old token with an `iat` claim is stopped too. An old token with no `iat` works until it expires.
+  - `Auth().logout(req)` now works on a JWT guard: it revokes the bearer token of the request until it expires. Before, it threw a `StateError` on a JWT guard.
+  - `logout` now returns `Future<void>` and takes an `IDoxRequest`. Every 3.0.2 call still compiles, and a session logout still happens at once, also without `await`. `await` it on a JWT guard to be sure the token is revoked. Two small changes: a class that `extends Auth` and overrides `logout` must use the new signature, and the `unawaited_futures` lint now warns on a call with no `await`.
+  - New `Auth().revokeAllTokens(id)`: all tokens of the user made before now stop working (eg. after a password change or a ban). An old token with an `iat` claim is stopped too (tokens from `JwtAuthDriver` have one). An old token with no `iat` works until it expires.
   - Logout on an old token (no `jti`) does nothing extra, like before: it can not go on the deny-list.
   - New `Auth().forgetUser(id)`: drops the user from the `userCacheTtl` cache on all isolates and servers that share the cache.
   - New optional `JwtAuthDriver(revocationStore: ...)` picks the cache store. Give auth its own store and never flush it: a flush, or a full `memory` store with `max_size`, brings revoked tokens back. Use a shared store like `redis` with many isolates or servers.
-  - `verifyToken` reads this store on every request, also with `userCacheTtl`. On the default `file` store this is 2 or 3 file reads per request. Use `memory` for one isolate, or `redis` for many. If the store can not be read, the token is checked like before (signature and `exp`) and a warning is printed, so a cache outage does not log everyone out.
-- `AuthDriver.createToken` still gets the user data, like before, plus the id as `sub`. `JwtAuthDriver.createToken` puts only the id in the token. It takes the id from `sub`, or from the primary key, so `createToken(user.toJson(), guard)` still works.
+  - `verifyToken` reads this store on every request, also with `userCacheTtl`. On the default `file` store this is 2 or 3 file reads per request. Use `memory` for one isolate, or `redis` for many. If the store can not be read, the token is checked like in 3.0.2 (signature and `exp`), and a warning is printed once, so a cache outage does not log everyone out.
+- `AuthDriver.createToken` gets `user.toJson()`, like in 3.0.2. When the primary key is hidden, the id is added as `sub`.
 
 ## 3.0.2
 

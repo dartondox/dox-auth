@@ -154,21 +154,18 @@ class Auth implements IAuth {
     return _userData?.toJson();
   }
 
-  /// A JWT has only the user id (the `sub` claim), not the user
-  /// columns. Anyone can read a JWT payload, and a small token is
-  /// cheaper to send on each request.
+  /// The driver gets `user.toJson()`, like in 3.0.2. When the primary
+  /// key is hidden, the id is added as `sub`, so the driver still knows
+  /// the user.
   String? _createToken() {
     Model<dynamic>? user = _userData;
     if (user == null) {
       return null;
     }
-    dynamic id = user.toMap(original: true)[user.primaryKey];
-
-    /// the user data too, like in 3.0.2, for custom drivers that read it.
-    /// `JwtAuthDriver` keeps only `sub`.
-    return _driver.createToken(<String, dynamic>{
-      ...user.toJson(),
-      'sub': id,
-    }, _guard);
+    Map<String, dynamic> data = user.toJson();
+    if (!data.containsKey(user.primaryKey)) {
+      data['sub'] = user.toMap(original: true)[user.primaryKey];
+    }
+    return _driver.createToken(data, _guard);
   }
 }

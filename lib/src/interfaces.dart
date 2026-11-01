@@ -43,8 +43,8 @@ abstract class AuthDriver {
     String guard,
   );
 
-  /// A token for the user. `Auth` passes `user.toJson()` plus the user
-  /// id as `sub`. `JwtAuthDriver` puts only `sub` in the token.
+  /// A token for the user. `Auth` passes `user.toJson()`, like in 3.0.2.
+  /// When the primary key is hidden, the id is added as `sub`.
   String? createToken(Map<String, dynamic>? userPayload, String guard);
 
   /// checked when no user is found, so a login takes as long for an

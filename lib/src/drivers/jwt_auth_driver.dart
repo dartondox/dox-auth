@@ -94,6 +94,17 @@ class JwtAuthDriver extends AuthDriver {
 
   static final Random _random = Random.secure();
 
+  bool _warnedStoreDown = false;
+
+  /// Put only the user id (the `sub` claim) in new tokens, not the user
+  /// columns. Off by default, so tokens look like in 3.0.2: the user
+  /// (`toJson()`, hidden fields left out) plus `jti`, `iat` and `exp`.
+  ///
+  /// Turn it on when you can: anyone can read a JWT payload, and a
+  /// small token is cheaper to send. A front end that reads user fields
+  /// from the token must then load the user from the API.
+  final bool minimalPayload;
+
   /// constructor
   JwtAuthDriver({
     required this.secret,
@@ -104,6 +115,7 @@ class JwtAuthDriver extends AuthDriver {
     this.userCacheTtl,
     this.previousSecrets,
     this.revocationStore,
+    this.minimalPayload = false,
   }) {
     /// with an empty key anyone can sign a token for any user
     JWTKey key = secret;
@@ -166,9 +178,14 @@ class JwtAuthDriver extends AuthDriver {
       /// get model from provider
       Model<dynamic> model = provider.model();
 
-      /// the user id. A token made before 3.0.3 has no `sub`: it holds
-      /// the whole user, so the id is under the primary key.
-      dynamic id = payload['sub'] ?? payload[model.primaryKey];
+      /// The user id. A full token (3.0.2, and the default now) holds the
+      /// user, so the id is under the primary key, like in 3.0.2. A
+      /// user column named `sub` is never read. Only a small token
+      /// ([minimalPayload]: a `jti`, no user columns) keeps it in `sub`.
+      dynamic jti = payload['jti'];
+      dynamic id = payload.containsKey(model.primaryKey)
+          ? payload[model.primaryKey]
+          : (jti is String ? payload['sub'] : null);
       if (id == null) {
         return null;
       }
@@ -176,7 +193,6 @@ class JwtAuthDriver extends AuthDriver {
       /// A token made before 3.0.3 has no `jti`. It still works until it
       /// expires, so an upgrade logs no one out. It can not be put on
       /// the deny-list, but `revokeAllTokens` still stops it by its `iat`.
-      dynamic jti = payload['jti'];
       dynamic iat = payload['iat'];
 
       /// one cache read for all checks
@@ -250,7 +266,10 @@ class JwtAuthDriver extends AuthDriver {
     try {
       return await _cache.many(keys);
     } catch (error) {
-      // ponytail: one print per request while the store is down.
+      // ponytail: warns once per driver (per isolate), so a long outage does not
+      // flood the log. Later outages are silent.
+      if (_warnedStoreDown) return <String, dynamic>{};
+      _warnedStoreDown = true;
       print(
         '[dox] warning: dox_auth can not read the revocation store '
         '($error). Revoked tokens are accepted until it works again.',
@@ -371,18 +390,22 @@ class JwtAuthDriver extends AuthDriver {
   /// ```
   /// String token = auth.login(user);
   /// ```
-  /// Only the user id goes into the token: `userPayload['sub']`, or the
-  /// primary key of the user (like `user.toJson()` in 3.0.2). Other keys
-  /// are dropped, because anyone can read the payload.
+  /// By default the token holds [userPayload], like in 3.0.2, plus a
+  /// `jti`. With [minimalPayload], it holds only the user id as `sub`:
+  /// the primary key of [userPayload], or its `sub` when the primary
+  /// key is missing.
   @override
   String? createToken(Map<String, dynamic>? userPayload, String guard) {
     try {
-      dynamic id =
-          userPayload?['sub'] ??
-          userPayload?[AuthEngine().guard(guard).provider.model().primaryKey];
-      if (id == null) return null;
+      Map<String, dynamic> payload = <String, dynamic>{...?userPayload};
+      if (minimalPayload) {
+        String key = AuthEngine().guard(guard).provider.model().primaryKey;
+        dynamic id = payload[key] ?? payload['sub'];
+        if (id == null) return null;
+        payload = <String, dynamic>{'sub': id};
+      }
       JWT jwt = JWT(
-        <String, dynamic>{'sub': id},
+        payload,
         issuer: issuer,
         audience: Audience.one(guard),
         jwtId: _newJti(),
