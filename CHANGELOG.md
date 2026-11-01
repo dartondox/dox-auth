@@ -18,6 +18,7 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
 - Fix: the `Bearer` prefix of the `Authorization` header is matched in any case, so `bearer xyz` works. New `JwtAuthDriver.bearerToken(req)` reads the token.
 - Fix: JWT `verifyToken` no longer hides unexpected errors. A database outage or a bad config still gives no user (a 401), like in 3.0.2, but the error now goes to `AppConfig.exceptionHandler.report` (or stderr before Dox is set up), so you can see it. A bad, changed or expired token is still quiet.
 - Security, opt-in: login throttle. `Auth.throttle = LoginThrottle(maxAttempts: 5, decay: Duration(minutes: 1))` limits failed `attempt` and `attemptSession` logins per login field and ip, with the app cache. Too many tries throw `LoginThrottledException` (429). Off by default, so nothing changes. New optional `Auth(ip: req.ip())` gives the ip to `attempt`.
+- New: `Auth.needsRehash(hash)` is true when a password hash was not made with the cost of `Hash.rounds` (or `rounds:`). `Auth.hashCost(hash)` reads the cost of a hash. The default cost stays 10. The README shows how to raise it and hash old passwords again on login.
 - `AuthDriver.createToken` gets `user.toJson()`, like in 3.0.2. When the primary key is hidden, the id is added as `sub`.
 
 ## 3.0.2

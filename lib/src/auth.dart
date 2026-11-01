@@ -31,6 +31,30 @@ class Auth implements IAuth {
 
   AuthDriver get _driver => AuthEngine().guard(_guard).driver;
 
+  static final RegExp _bcryptCost = RegExp(r'^\$2[abxy]?\$(\d{2})\$');
+
+  /// The bcrypt cost of [hash], or null when it is not a bcrypt hash.
+  /// ```
+  /// Auth.hashCost(r'$2a$10$...'); // 10
+  /// ```
+  static int? hashCost(String hash) {
+    String? cost = _bcryptCost.firstMatch(hash)?.group(1);
+    return cost == null ? null : int.parse(cost);
+  }
+
+  /// true when [hash] was not made with the cost [rounds] (default:
+  /// `Hash.rounds`), or is not a bcrypt hash. After you raise the cost,
+  /// hash the password again on the next good login:
+  /// ```
+  /// if (Auth.needsRehash(user.password)) {
+  ///   user.password = Hash.make(password);
+  ///   await user.save();
+  /// }
+  /// ```
+  static bool needsRehash(String hash, {int? rounds}) {
+    return hashCost(hash) != (rounds ?? Hash.rounds);
+  }
+
   static void initialize(AuthConfig authConfig) {
     AuthEngine().init(authConfig);
   }

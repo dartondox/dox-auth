@@ -136,6 +136,27 @@ bool ok = await Auth().attemptSession(req, credentials);
 - The counts live in the app cache. Pick a store with `LoginThrottle(store: 'redis')`. Use a shared store like `redis` for many isolates or servers.
 - Without an ip, `attempt` counts per account only. Then anyone can lock an account for `decay`, so pass the ip.
 
+### Password hash cost
+
+Passwords use bcrypt with cost 10 by default. Each step up doubles the time of a login. To raise it, set the cost for new hashes and tell the driver, so a login for an unknown email takes as long as a wrong password:
+
+```dart
+Hash.rounds = 12;
+JwtAuthDriver(secret: SecretKey(env.appKey), hashRounds: 12);
+SessionAuthDriver(hashRounds: 12);
+```
+
+Old hashes keep their own cost, so they still work. Hash them again on the next good login:
+
+```dart
+if (Auth.needsRehash(user.password)) {
+  user.password = Hash.make(password);
+  await user.save();
+}
+```
+
+`Auth.hashCost(hash)` gives the cost of a hash. `Auth.needsRehash(hash, rounds: 12)` checks another cost.
+
 ## Custom guard (API key)
 
 You can check the user in your own way, like an API key in the header.
