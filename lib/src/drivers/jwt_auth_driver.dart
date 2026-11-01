@@ -66,10 +66,19 @@ class JwtAuthDriver extends AuthDriver {
   /// `verifyToken` does not load the user from the database on every
   /// request. Off (`null`) by default.
   /// A change to the user (eg. delete or ban) is seen only after this
-  /// time, unless you call `Auth().forgetUser(id)`. Each server isolate
+  /// time, unless you call `Auth().forgetUser(id)` (needs [revocation]). Each server isolate
   /// has its own cache. Requests in this time share the same user
   /// object, so do not change it per request.
   final Duration? userCacheTtl;
+
+  /// Turn on token revocation: `Auth().revokeToken(req)`,
+  /// `Auth().revokeAllTokens(id)` and `Auth().forgetUser(id)`. Off by
+  /// default, so `verifyToken` never reads the cache, like in 3.0.2.
+  ///
+  /// When on, `verifyToken` reads [revocationStore] on every request.
+  /// When off, the revoke methods throw a [StateError], so no one thinks
+  /// a token is revoked when it is not.
+  final bool revocation;
 
   /// The name of the store in `AppConfig.cache` that keeps revoked
   /// tokens, the `revokeAllTokens` times and the `forgetUser` times.
@@ -94,6 +103,17 @@ class JwtAuthDriver extends AuthDriver {
 
   static final Random _random = Random.secure();
 
+  bool _warnedStoreDown = false;
+
+  /// Put only the user id (the `sub` claim) in new tokens, not the user
+  /// columns. Off by default, so tokens look like in 3.0.2: the user
+  /// (`toJson()`, hidden fields left out) plus `jti`, `iat` and `exp`.
+  ///
+  /// Turn it on when you can: anyone can read a JWT payload, and a
+  /// small token is cheaper to send. A front end that reads user fields
+  /// from the token must then load the user from the API.
+  final bool minimalPayload;
+
   /// constructor
   JwtAuthDriver({
     required this.secret,
@@ -104,6 +124,8 @@ class JwtAuthDriver extends AuthDriver {
     this.userCacheTtl,
     this.previousSecrets,
     this.revocationStore,
+    this.minimalPayload = false,
+    this.revocation = false,
   }) {
     /// with an empty key anyone can sign a token for any user
     JWTKey key = secret;
@@ -166,33 +188,43 @@ class JwtAuthDriver extends AuthDriver {
       /// get model from provider
       Model<dynamic> model = provider.model();
 
-      /// the user id. The token has no other user data.
-      dynamic id = payload['sub'];
+      /// The user id. A full token (3.0.2, and the default now) holds the
+      /// user, so the id is under the primary key, like in 3.0.2. A
+      /// user column named `sub` is never read. Only a small token
+      /// ([minimalPayload]: a `jti`, no user columns) keeps it in `sub`.
       dynamic jti = payload['jti'];
-      dynamic iat = payload['iat'];
-
-      /// a token with no jti can not be revoked, so it is not accepted
-      if (id == null || jti is! String || iat is! num) {
+      dynamic id = payload.containsKey(model.primaryKey)
+          ? payload[model.primaryKey]
+          : (jti is String ? payload['sub'] : null);
+      if (id == null) {
         return null;
       }
 
-      /// one cache read for all checks
+      /// A token made before 3.0.3 has no `jti`. It still works until it
+      /// expires, so an upgrade logs no one out. It can not be put on
+      /// the deny-list, but `revokeAllTokens` still stops it by its `iat`.
+      dynamic iat = payload['iat'];
+
+      /// one cache read for all checks. With [revocation] off there is
+      /// no cache read at all, like in 3.0.2.
       String userKey = '$guard:$id';
       Duration? ttl = userCacheTtl;
-      Map<String, dynamic> found = await _cache.many(<String>[
-        _revokedKey(jti),
-        _validAfterKey(userKey),
-        if (ttl != null) _freshAfterKey(userKey),
-      ]);
+      Map<String, dynamic> found = !revocation
+          ? const <String, dynamic>{}
+          : await _readRevocations(<String>[
+              if (jti is String) _revokedKey(jti),
+              _validAfterKey(userKey),
+              if (ttl != null) _freshAfterKey(userKey),
+            ]);
 
       /// logged out
-      if (found[_revokedKey(jti)] != null) {
+      if (jti is String && found[_revokedKey(jti)] != null) {
         return null;
       }
 
       /// made before `revokeAllTokens`
       dynamic validAfter = found[_validAfterKey(userKey)];
-      if (validAfter is num && iat < validAfter) {
+      if (validAfter is num && iat is num && iat < validAfter) {
         return null;
       }
 
@@ -240,6 +272,25 @@ class JwtAuthDriver extends AuthDriver {
 
   CacheStore get _cache => Dox().cache.store(revocationStore);
 
+  /// Reads [keys] from [revocationStore]. When the store can not be
+  /// read, the token is checked like in 3.0.2 (signature and `exp`
+  /// only), with a warning, so a cache outage does not log everyone out.
+  Future<Map<String, dynamic>> _readRevocations(List<String> keys) async {
+    try {
+      return await _cache.many(keys);
+    } catch (error) {
+      // ponytail: warns once per driver (per isolate), so a long outage does not
+      // flood the log. Later outages are silent.
+      if (_warnedStoreDown) return <String, dynamic>{};
+      _warnedStoreDown = true;
+      print(
+        '[dox] warning: dox_auth can not read the revocation store '
+        '($error). Revoked tokens are accepted until it works again.',
+      );
+      return <String, dynamic>{};
+    }
+  }
+
   static String _revokedKey(String jti) => 'auth:revoked:$jti';
 
   static String _validAfterKey(String userKey) => 'auth:valid_after:$userKey';
@@ -258,10 +309,21 @@ class JwtAuthDriver extends AuthDriver {
   /// Seconds since epoch, like the `iat` and `exp` claims.
   static int _nowSeconds() => DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
+  /// Throws when [revocation] is off.
+  void _needRevocation(String method) {
+    if (revocation) return;
+    throw StateError(
+      '$method needs token revocation. '
+      'Turn it on with JwtAuthDriver(revocation: true).',
+    );
+  }
+
   /// Revoke [token] (eg. on logout). Its `jti` goes on a deny-list in
-  /// the cache until the token expires. A bad or expired token is
-  /// ignored: it does not work anyway.
-  Future<void> revokeToken(String token, String guard) async {
+  /// the cache until the token expires. A bad or expired token, or one
+  /// with no `jti` (made before 3.0.3), is ignored. Needs [revocation].
+  Future<void> revokeToken(String? token, String guard) async {
+    _needRevocation('revokeToken');
+    if (token == null) return;
     Map<String, dynamic> payload;
     try {
       payload = _payload(token, guard);
@@ -279,8 +341,10 @@ class JwtAuthDriver extends AuthDriver {
 
   /// Revoke all tokens of the user [id] made before now (eg. after a
   /// password change or a ban). Tokens made after this call work.
-  /// Also drops the user from [userCacheTtl].
+  /// Also drops the user from [userCacheTtl]. Needs [revocation].
   Future<void> revokeAllTokens(dynamic id, String guard) async {
+    _needRevocation('revokeAllTokens');
+
     /// ponytail: iat is in whole seconds, so a token made in the same
     /// second as this call still works. A ms claim would close it.
     /// kept as long as a new token lives; older tokens expired by then.
@@ -294,8 +358,9 @@ class JwtAuthDriver extends AuthDriver {
 
   /// Drop the user [id] from [userCacheTtl] on all isolates and
   /// servers that share [revocationStore], so the next request loads it
-  /// from the database (eg. after a ban or a delete).
+  /// from the database (eg. after a ban or a delete). Needs [revocation].
   Future<void> forgetUser(dynamic id, String guard) async {
+    _needRevocation('forgetUser');
     String userKey = '$guard:$id';
     _userCache.remove(userKey);
     Duration? ttl = userCacheTtl;
@@ -352,15 +417,22 @@ class JwtAuthDriver extends AuthDriver {
   /// ```
   /// String token = auth.login(user);
   /// ```
-  /// Only the user id in `userPayload['sub']` goes into the token. Other
-  /// keys are dropped, because anyone can read the payload.
+  /// By default the token holds [userPayload], like in 3.0.2, plus a
+  /// `jti`. With [minimalPayload], it holds only the user id as `sub`:
+  /// the primary key of [userPayload], or its `sub` when the primary
+  /// key is missing.
   @override
   String? createToken(Map<String, dynamic>? userPayload, String guard) {
-    dynamic id = userPayload?['sub'];
-    if (id == null) return null;
     try {
+      Map<String, dynamic> payload = <String, dynamic>{...?userPayload};
+      if (minimalPayload) {
+        String key = AuthEngine().guard(guard).provider.model().primaryKey;
+        dynamic id = payload[key] ?? payload['sub'];
+        if (id == null) return null;
+        payload = <String, dynamic>{'sub': id};
+      }
       JWT jwt = JWT(
-        <String, dynamic>{'sub': id},
+        payload,
         issuer: issuer,
         audience: Audience.one(guard),
         jwtId: _newJti(),

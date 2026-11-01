@@ -91,32 +91,29 @@ class Auth implements IAuth {
     _sessionDriver.login(req, user, _guard);
   }
 
-  /// Log out.
-  /// With `JwtAuthDriver`, the bearer token of [req] is revoked. It is
-  /// kept on a deny-list in the cache until it expires.
-  /// With `SessionAuthDriver`, all session data is removed.
-  /// ```
-  /// await Auth().logout(req);
-  /// ```
-  Future<void> logout(IDoxRequest req) async {
+  /// End the session login. All session data is removed.
+  void logout(DoxRequest req) {
     _userData = null;
-    AuthDriver driver = _driver;
-    if (driver is JwtAuthDriver) {
-      String? header = req.header('Authorization');
-      if (header == null) return;
-      await driver.revokeToken(header.replaceFirst('Bearer ', ''), _guard);
-      return;
-    }
-    SessionAuthDriver session = _sessionDriver;
-    if (req is! DoxRequest) {
-      throw StateError('A session logout needs a DoxRequest.');
-    }
-    session.logout(req);
+    _sessionDriver.logout(req);
+  }
+
+  /// Revoke the bearer token of [req] (a JWT logout). It is kept on a
+  /// deny-list in the cache until it expires. Needs `JwtAuthDriver` with
+  /// `revocation: true`. A request with no token does nothing.
+  /// ```
+  /// await Auth().revokeToken(req);
+  /// ```
+  Future<void> revokeToken(IDoxRequest req) async {
+    JwtAuthDriver driver = _jwtDriver;
+    _userData = null;
+    String? token = req.header('Authorization')?.replaceFirst('Bearer ', '');
+    await driver.revokeToken(token, _guard);
   }
 
   /// Revoke all tokens of the user [id] made before now, on all
   /// servers that share the cache. Use it after a password change or a
-  /// ban. Tokens made after this call work. Needs `JwtAuthDriver`.
+  /// ban. Tokens made after this call work. Needs `JwtAuthDriver` with
+  /// `revocation: true`.
   /// ```
   /// await Auth().revokeAllTokens(user.id);
   /// ```
@@ -126,7 +123,7 @@ class Auth implements IAuth {
 
   /// Drop the user [id] from the `userCacheTtl` cache, so the next
   /// request loads it from the database. Use it after a ban or a
-  /// change to the user. Needs `JwtAuthDriver`.
+  /// change to the user. Needs `JwtAuthDriver` with `revocation: true`.
   /// ```
   /// await Auth().forgetUser(user.id);
   /// ```
@@ -154,15 +151,18 @@ class Auth implements IAuth {
     return _userData?.toJson();
   }
 
-  /// The token has only the user id (the `sub` claim), not the user
-  /// columns. Anyone can read a JWT payload, and a small token is
-  /// cheaper to send on each request.
+  /// The driver gets `user.toJson()`, like in 3.0.2. When the primary
+  /// key is hidden, the id is added as `sub`, so the driver still knows
+  /// the user.
   String? _createToken() {
     Model<dynamic>? user = _userData;
     if (user == null) {
       return null;
     }
-    dynamic id = user.toMap(original: true)[user.primaryKey];
-    return _driver.createToken(<String, dynamic>{'sub': id}, _guard);
+    Map<String, dynamic> data = user.toJson();
+    if (!data.containsKey(user.primaryKey)) {
+      data['sub'] = user.toMap(original: true)[user.primaryKey];
+    }
+    return _driver.createToken(data, _guard);
   }
 }

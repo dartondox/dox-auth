@@ -1,12 +1,21 @@
 ## Unreleased
 
-- Breaking, security: a JWT now holds only the user id, in the `sub` claim. Before, it held every visible column of the user, and anyone can read a JWT payload. Old tokens have no `sub`, so they stop working. Users must log in again. Code that read user fields from the token payload must load the user instead (`req.auth?.user<User>()`).
-- Security: a JWT can now be revoked. Each token has a random `jti`. The JWT driver keeps revoked tokens in the app cache.
-  - `Auth().logout(req)` now works on a JWT guard: it revokes the bearer token of the request until it expires. It now returns a `Future`, so `await` it. It takes an `IDoxRequest`.
-  - New `Auth().revokeAllTokens(id)`: all tokens of the user made before now stop working (eg. after a password change or a ban).
+No breaking change. Apps on 3.0.2 work the same with no code change, and no user is logged out. The new, safer features are opt-in.
+
+- By default a JWT holds the same data as in 3.0.2: the user (`toJson()`, hidden fields left out), plus `iat`, `exp` and a new `jti`. A front end that reads user fields from the token still works.
+- Security, opt-in: `JwtAuthDriver(minimalPayload: true)` puts only the user id (the `sub` claim) in new tokens. This is the safer choice: anyone can read a JWT payload, and a small token is cheaper to send. Load the user with `req.auth?.user<User>()`, not from the token.
+- The user id comes from the primary key, like in 3.0.2. Only a small token (a `jti` and no primary key) reads `sub`. A user column named `sub` (eg. from an OAuth login) is never taken as the id.
+- Tokens made before this version (no `jti`) work exactly like in 3.0.2.
+- Security, opt-in: JWT revocation with `JwtAuthDriver(revocation: true)`. Off by default: then `verifyToken` does no cache read, like in 3.0.2.
+  - New `Auth().revokeToken(req)`: a JWT logout. It revokes the bearer token of the request until it expires.
+  - New `Auth().revokeAllTokens(id)`: all tokens of the user made before now stop working (eg. after a password change or a ban). An old token with an `iat` claim is stopped too (tokens from `JwtAuthDriver` have one). An old token with no `iat` works until it expires.
   - New `Auth().forgetUser(id)`: drops the user from the `userCacheTtl` cache on all isolates and servers that share the cache.
-  - New `JwtAuthDriver(revocationStore: ...)` picks the cache store. Give auth its own store and never flush it: a flush, or a full `memory` store with `max_size`, brings revoked tokens back. Use a shared store like `redis` with many isolates or servers.
-  - Breaking: `verifyToken` reads this store on every request, also with `userCacheTtl`. On the default `file` store this is 2 or 3 file reads per request. Use `memory` for one isolate, or `redis` for many. If the store can not be read, the token is rejected. A token with no `jti` is rejected.
+  - With revocation off, these three methods throw a `StateError`, so no one thinks a token is revoked when it is not.
+  - `revokeToken` on an old token (no `jti`) does nothing: it can not go on the deny-list.
+  - New optional `JwtAuthDriver(revocationStore: ...)` picks the cache store. Give auth its own store and never flush it: a flush, or a full `memory` store with `max_size`, brings revoked tokens back. Use a shared store like `redis` with many isolates or servers.
+  - With revocation on, `verifyToken` reads this store on every request, also with `userCacheTtl`. On the default `file` store this is 2 or 3 file reads per request. Use `memory` for one isolate, or `redis` for many. If the store can not be read, the token is checked like in 3.0.2 (signature and `exp`), and a warning is printed once, so a cache outage does not log everyone out.
+- `Auth().logout(req)` is not changed: it is the session logout, like in 3.0.2.
+- `AuthDriver.createToken` gets `user.toJson()`, like in 3.0.2. When the primary key is hidden, the id is added as `sub`.
 
 ## 3.0.2
 
