@@ -166,33 +166,36 @@ class JwtAuthDriver extends AuthDriver {
       /// get model from provider
       Model<dynamic> model = provider.model();
 
-      /// the user id. The token has no other user data.
-      dynamic id = payload['sub'];
-      dynamic jti = payload['jti'];
-      dynamic iat = payload['iat'];
-
-      /// a token with no jti can not be revoked, so it is not accepted
-      if (id == null || jti is! String || iat is! num) {
+      /// the user id. A token made before 3.0.3 has no `sub`: it holds
+      /// the whole user, so the id is under the primary key.
+      dynamic id = payload['sub'] ?? payload[model.primaryKey];
+      if (id == null) {
         return null;
       }
+
+      /// A token made before 3.0.3 has no `jti`. It still works until it
+      /// expires, so an upgrade logs no one out. It can not be put on
+      /// the deny-list, but `revokeAllTokens` still stops it by its `iat`.
+      dynamic jti = payload['jti'];
+      dynamic iat = payload['iat'];
 
       /// one cache read for all checks
       String userKey = '$guard:$id';
       Duration? ttl = userCacheTtl;
-      Map<String, dynamic> found = await _cache.many(<String>[
-        _revokedKey(jti),
+      Map<String, dynamic> found = await _readRevocations(<String>[
+        if (jti is String) _revokedKey(jti),
         _validAfterKey(userKey),
         if (ttl != null) _freshAfterKey(userKey),
       ]);
 
       /// logged out
-      if (found[_revokedKey(jti)] != null) {
+      if (jti is String && found[_revokedKey(jti)] != null) {
         return null;
       }
 
       /// made before `revokeAllTokens`
       dynamic validAfter = found[_validAfterKey(userKey)];
-      if (validAfter is num && iat < validAfter) {
+      if (validAfter is num && iat is num && iat < validAfter) {
         return null;
       }
 
@@ -239,6 +242,22 @@ class JwtAuthDriver extends AuthDriver {
   }
 
   CacheStore get _cache => Dox().cache.store(revocationStore);
+
+  /// Reads [keys] from [revocationStore]. When the store can not be
+  /// read, the token is checked like in 3.0.2 (signature and `exp`
+  /// only), with a warning, so a cache outage does not log everyone out.
+  Future<Map<String, dynamic>> _readRevocations(List<String> keys) async {
+    try {
+      return await _cache.many(keys);
+    } catch (error) {
+      // ponytail: one print per request while the store is down.
+      print(
+        '[dox] warning: dox_auth can not read the revocation store '
+        '($error). Revoked tokens are accepted until it works again.',
+      );
+      return <String, dynamic>{};
+    }
+  }
 
   static String _revokedKey(String jti) => 'auth:revoked:$jti';
 
@@ -352,13 +371,16 @@ class JwtAuthDriver extends AuthDriver {
   /// ```
   /// String token = auth.login(user);
   /// ```
-  /// Only the user id in `userPayload['sub']` goes into the token. Other
-  /// keys are dropped, because anyone can read the payload.
+  /// Only the user id goes into the token: `userPayload['sub']`, or the
+  /// primary key of the user (like `user.toJson()` in 3.0.2). Other keys
+  /// are dropped, because anyone can read the payload.
   @override
   String? createToken(Map<String, dynamic>? userPayload, String guard) {
-    dynamic id = userPayload?['sub'];
-    if (id == null) return null;
     try {
+      dynamic id =
+          userPayload?['sub'] ??
+          userPayload?[AuthEngine().guard(guard).provider.model().primaryKey];
+      if (id == null) return null;
       JWT jwt = JWT(
         <String, dynamic>{'sub': id},
         issuer: issuer,

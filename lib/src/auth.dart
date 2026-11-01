@@ -154,7 +154,7 @@ class Auth implements IAuth {
     return _userData?.toJson();
   }
 
-  /// The token has only the user id (the `sub` claim), not the user
+  /// A JWT has only the user id (the `sub` claim), not the user
   /// columns. Anyone can read a JWT payload, and a small token is
   /// cheaper to send on each request.
   String? _createToken() {
@@ -163,6 +163,12 @@ class Auth implements IAuth {
       return null;
     }
     dynamic id = user.toMap(original: true)[user.primaryKey];
-    return _driver.createToken(<String, dynamic>{'sub': id}, _guard);
+
+    /// the user data too, like in 3.0.2, for custom drivers that read it.
+    /// `JwtAuthDriver` keeps only `sub`.
+    return _driver.createToken(<String, dynamic>{
+      ...user.toJson(),
+      'sub': id,
+    }, _guard);
   }
 }

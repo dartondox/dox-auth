@@ -175,7 +175,16 @@ void main() {
       Map<String, dynamic> payload = JWT.decode(token).payload;
       expect(payload['sub'], 1);
       expect(payload.containsKey('email'), isFalse);
-      expect(driver.createToken(<String, dynamic>{'id': 1}, 'web'), isNull);
+      // like 3.0.2: the whole user, with the id under the primary key
+      Map<String, dynamic> fromJson = JWT
+          .decode(driver.createToken(users[1]!.toJson(), 'web')!)
+          .payload;
+      expect(fromJson['sub'], 1);
+      expect(fromJson.containsKey('email'), isFalse);
+      expect(
+        driver.createToken(<String, dynamic>{'email': 'x'}, 'web'),
+        isNull,
+      );
     });
 
     test('verifyToken finds the user for a good token', () async {
@@ -410,11 +419,35 @@ void main() {
       expect(JWT.decode(a).jwtId, isNot(JWT.decode(b).jwtId));
     });
 
-    test('a token without a jti is rejected', () async {
+    test('a token without a jti still works', () async {
       String token = JWT(<String, dynamic>{
         'sub': 1,
       }, audience: Audience.one('web')).sign(signingKey);
-      expect(await loggedIn(token), isFalse);
+      expect(await loggedIn(token), isTrue);
+    });
+
+    test('a cache that can not be read does not log anyone out', () async {
+      Auth.initialize(
+        AuthConfig(
+          defaultGuard: 'web',
+          guards: <String, AuthGuard>{
+            'web': AuthGuard(
+              driver: JwtAuthDriver(
+                secret: SecretKey(secret),
+                revocationStore: 'missing',
+              ),
+              provider: AuthProvider(model: () => FakeUser()),
+            ),
+          },
+        ),
+      );
+      String token = Auth().login(users[1]!)!;
+      late bool result;
+      await expectLater(
+        () async => result = await loggedIn(token),
+        prints(contains('[dox] warning: dox_auth can not read')),
+      );
+      expect(result, isTrue);
     });
 
     test('a token used after logout is rejected', () async {
@@ -512,25 +545,6 @@ void main() {
       expect(await loggedIn(token), isTrue);
       users.clear();
       await Auth().forgetUser(1);
-      expect(await loggedIn(token), isFalse);
-    });
-
-    test('a cache that can not be read rejects the token', () async {
-      Auth.initialize(
-        AuthConfig(
-          defaultGuard: 'web',
-          guards: <String, AuthGuard>{
-            'web': AuthGuard(
-              driver: JwtAuthDriver(
-                secret: SecretKey(secret),
-                revocationStore: 'no-such-store',
-              ),
-              provider: AuthProvider(model: () => FakeUser()),
-            ),
-          },
-        ),
-      );
-      String token = Auth().login(users[1]!)!;
       expect(await loggedIn(token), isFalse);
     });
 
@@ -821,6 +835,60 @@ void main() {
       // a map message is sent as it is
       Map<String, String> body = <String, String>{'error': 'login_needed'};
       expect(UnAuthorizedException(message: body).toResponse(), body);
+    });
+  });
+
+  group('Tokens made before 3.0.3 |', () {
+    /// a token made the 3.0.2 way: the whole user, no sub and no jti
+    String oldToken({Duration expiresIn = const Duration(hours: 1)}) {
+      return JWT(
+        users[1]!.toJson(),
+        audience: Audience.one('web'),
+      ).sign(signingKey, expiresIn: expiresIn);
+    }
+
+    Future<FakeUser?> userOf(String token) async {
+      Auth auth = Auth();
+      await auth.verifyToken(bearer(token));
+      return auth.user<FakeUser>();
+    }
+
+    test('still works and loads the user', () async {
+      String token = oldToken();
+      expect(JWT.decode(token).payload.containsKey('jti'), isFalse);
+      expect((await userOf(token))?.email, 'a@dox.dev');
+    });
+
+    test('expires as normal', () async {
+      String token = oldToken(expiresIn: Duration(seconds: 1));
+      await Future<void>.delayed(Duration(seconds: 2));
+      expect(await userOf(token), isNull);
+    });
+
+    test('logout does nothing, like in 3.0.2', () async {
+      String token = oldToken();
+      await Auth().logout(bearer(token));
+      expect(await userOf(token), isNotNull);
+    });
+
+    test('revokeAllTokens rejects one with an iat', () async {
+      int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      String token = JWT(<String, dynamic>{
+        ...users[1]!.toJson(),
+        'iat': now - 10,
+      }, audience: Audience.one('web')).sign(signingKey, noIssueAt: true);
+      expect(await userOf(token), isNotNull);
+      await Auth().revokeAllTokens(1);
+      expect(await userOf(token), isNull);
+    });
+
+    test('one with no iat works until it expires', () async {
+      String token = JWT(
+        users[1]!.toJson(),
+        audience: Audience.one('web'),
+      ).sign(signingKey, noIssueAt: true, expiresIn: Duration(hours: 1));
+      await Auth().revokeAllTokens(1);
+      expect(await userOf(token), isNotNull);
     });
   });
 }
