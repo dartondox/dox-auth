@@ -43,6 +43,8 @@ abstract class AuthDriver {
     String guard,
   );
 
+  /// A token for the user. `Auth` passes only the user id, as
+  /// `{'sub': id}`, never the user columns.
   String? createToken(Map<String, dynamic>? userPayload, String guard);
 
   /// checked when no user is found, so a login takes as long for an

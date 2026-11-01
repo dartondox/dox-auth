@@ -1,5 +1,6 @@
 // ignore_for_file: depend_on_referenced_packages
 import 'package:dox_auth/src/auth_engine.dart';
+import 'package:dox_auth/src/drivers/jwt_auth_driver.dart';
 import 'package:dox_auth/src/drivers/session_auth_driver.dart';
 import 'package:dox_auth/src/interfaces.dart';
 import 'package:dox_core/dox_core.dart';
@@ -90,10 +91,53 @@ class Auth implements IAuth {
     _sessionDriver.login(req, user, _guard);
   }
 
-  /// End the session login. All session data is removed.
-  void logout(DoxRequest req) {
+  /// Log out.
+  /// With `JwtAuthDriver`, the bearer token of [req] is revoked. It is
+  /// kept on a deny-list in the cache until it expires.
+  /// With `SessionAuthDriver`, all session data is removed.
+  /// ```
+  /// await Auth().logout(req);
+  /// ```
+  Future<void> logout(IDoxRequest req) async {
     _userData = null;
-    _sessionDriver.logout(req);
+    AuthDriver driver = _driver;
+    if (driver is JwtAuthDriver) {
+      String? header = req.header('Authorization');
+      if (header == null) return;
+      await driver.revokeToken(header.replaceFirst('Bearer ', ''), _guard);
+      return;
+    }
+    SessionAuthDriver session = _sessionDriver;
+    if (req is! DoxRequest) {
+      throw StateError('A session logout needs a DoxRequest.');
+    }
+    session.logout(req);
+  }
+
+  /// Revoke all tokens of the user [id] made before now, on all
+  /// servers that share the cache. Use it after a password change or a
+  /// ban. Tokens made after this call work. Needs `JwtAuthDriver`.
+  /// ```
+  /// await Auth().revokeAllTokens(user.id);
+  /// ```
+  Future<void> revokeAllTokens(dynamic id) {
+    return _jwtDriver.revokeAllTokens(id, _guard);
+  }
+
+  /// Drop the user [id] from the `userCacheTtl` cache, so the next
+  /// request loads it from the database. Use it after a ban or a
+  /// change to the user. Needs `JwtAuthDriver`.
+  /// ```
+  /// await Auth().forgetUser(user.id);
+  /// ```
+  Future<void> forgetUser(dynamic id) {
+    return _jwtDriver.forgetUser(id, _guard);
+  }
+
+  JwtAuthDriver get _jwtDriver {
+    AuthDriver driver = _driver;
+    if (driver is JwtAuthDriver) return driver;
+    throw StateError("The auth guard '$_guard' does not use JwtAuthDriver.");
   }
 
   SessionAuthDriver get _sessionDriver {
@@ -110,10 +154,15 @@ class Auth implements IAuth {
     return _userData?.toJson();
   }
 
+  /// The token has only the user id (the `sub` claim), not the user
+  /// columns. Anyone can read a JWT payload, and a small token is
+  /// cheaper to send on each request.
   String? _createToken() {
-    if (_userData == null) {
+    Model<dynamic>? user = _userData;
+    if (user == null) {
       return null;
     }
-    return _driver.createToken(_userData?.toJson(), _guard);
+    dynamic id = user.toMap(original: true)[user.primaryKey];
+    return _driver.createToken(<String, dynamic>{'sub': id}, _guard);
   }
 }

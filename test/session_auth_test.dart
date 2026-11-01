@@ -19,8 +19,8 @@ class WebRouter extends Router {
       );
       return ok ? 'in' : 'wrong';
     });
-    Route.post('logout', (DoxRequest req) {
-      Auth().logout(req);
+    Route.post('logout', (DoxRequest req) async {
+      await Auth().logout(req);
       return 'out';
     });
     Route.get('me', <dynamic>[
@@ -31,8 +31,8 @@ class WebRouter extends Router {
       AuthMiddleware(redirectTo: '/login'),
       (DoxRequest req) => 'page',
     ]);
-    Route.get('jwt', (DoxRequest req) {
-      Auth(guard: 'api').logout(req);
+    Route.get('jwt', (DoxRequest req) async {
+      await Auth(guard: 'api').attemptSession(req, <String, dynamic>{});
       return 'no';
     });
   }
