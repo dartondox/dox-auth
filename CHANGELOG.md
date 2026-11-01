@@ -1,3 +1,15 @@
+## Unreleased
+
+- New: gates and policies, for what a user may do.
+  - `Gate.define('update-post', (User user, Post post) => ...)` adds a rule. The user and subject types come from the function.
+  - `Policy<User, Post>` holds the rules of one model. Add it with `Gate.policy<Post>(PostPolicy())`.
+  - `Gate.allows`, `denies`, `authorize` (403 when denied), `inspect`, `any` and `all`.
+  - `Gate.before` and `Gate.after` hooks. `Policy.before` for one policy.
+  - `GateResponse.deny('reason')` gives the message of the 403.
+  - A guest is denied, unless the user type is nullable.
+  - `req.can`, `req.cannot` and `req.authorize` use the user of `req.auth`.
+  - `Can('update', param: 'post')` middleware. A guest gets 401, a denied user gets 403. With `param`, the subject is the `Route.bind` value.
+
 ## 3.0.1
 
 - `JwtAuthDriver` keeps old tokens working after an `APP_KEY` change. When a token has a wrong signature, it tries each old key from `AppConfig.previousKeys`. New tokens are signed with the current key only. An expired token or a bad claim still fails at once.
