@@ -2,8 +2,7 @@
 import 'dart:convert';
 
 import 'package:dox_auth/dox_auth.dart';
-import 'package:dox_core/env/env.dart';
-import 'package:dox_core/utils/key_derivation.dart';
+import 'package:dox_core/dox_core.dart';
 import 'package:dox_orm/dox_orm.dart';
 
 class JwtAuthDriver extends AuthDriver {
@@ -18,6 +17,34 @@ class JwtAuthDriver extends AuthDriver {
 
   /// The key that signs and checks the tokens. See [secret].
   late final JWTKey signingKey = _signingKey(secret);
+
+  /// Old secrets, used only to check tokens after a key change.
+  /// New tokens are always signed with [secret].
+  /// When this is `null` and [secret] is the APP_KEY of the app, the
+  /// old keys come from `AppConfig.previousKeys`. Pass `[]` to turn
+  /// this off.
+  final List<JWTKey>? previousSecrets;
+
+  /// The keys that check tokens made with an old secret. Made on first
+  /// use, because `Dox().config` may be set after this driver.
+  late final List<JWTKey> previousSigningKeys = <JWTKey>[
+    for (JWTKey old in previousSecrets ?? _previousAppKeys()) _signingKey(old),
+  ];
+
+  /// old APP_KEYs, only when [secret] is the current APP_KEY
+  List<JWTKey> _previousAppKeys() {
+    JWTKey key = secret;
+    if (key is! SecretKey) return <JWTKey>[];
+    AppConfig config;
+    try {
+      config = Dox().config;
+    } on Error {
+      /// Dox is not initialized, so there are no old keys
+      return <JWTKey>[];
+    }
+    if (key.key != config.appKey) return <JWTKey>[];
+    return <JWTKey>[for (String old in config.previousKeys) SecretKey(old)];
+  }
 
   /// JWT issuer
   final String? issuer;
@@ -55,6 +82,7 @@ class JwtAuthDriver extends AuthDriver {
     this.issuer,
     this.hashRounds = 10,
     this.userCacheTtl,
+    this.previousSecrets,
   }) {
     /// with an empty key anyone can sign a token for any user
     JWTKey key = secret;
@@ -121,12 +149,7 @@ class JwtAuthDriver extends AuthDriver {
       /// verify token
       /// the audience is the guard name, so a token of one guard
       /// does not work for another guard.
-      JWT jwt = JWT.verify(
-        token,
-        signingKey,
-        audience: Audience.one(guard),
-        issuer: issuer,
-      );
+      JWT jwt = _verify(token, guard);
 
       /// get the payload
       Map<String, dynamic> payload = jwt.payload;
@@ -167,6 +190,26 @@ class JwtAuthDriver extends AuthDriver {
       /// ignore any errors
     }
     return null;
+  }
+
+  /// Checks [token] with the current key, then with each old key.
+  /// Only a wrong signature moves to the next key. An expired token or
+  /// a bad claim fails at once.
+  JWT _verify(String token, String guard) {
+    List<JWTKey> keys = <JWTKey>[signingKey, ...previousSigningKeys];
+    for (int i = 0; ; i++) {
+      try {
+        return JWT.verify(
+          token,
+          keys[i],
+          audience: Audience.one(guard),
+          issuer: issuer,
+        );
+      } on JWTInvalidException catch (e) {
+        bool badSignature = e.message == 'invalid signature';
+        if (!badSignature || i == keys.length - 1) rethrow;
+      }
+    }
   }
 
   /// attempt to login

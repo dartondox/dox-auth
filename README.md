@@ -58,6 +58,12 @@ Route.get('/auth/user', <dynamic>[AuthMiddleware(), authController.user]);
 
 After `AuthMiddleware`, `req.auth?.user<User>()` is the logged in user.
 
+### Change APP_KEY
+
+New tokens are signed with the current `APP_KEY`. To keep old tokens working after a key change, put the old key in `AppConfig.previousKeys`. The JWT driver checks a token with the current key first, then with each old key. An expired token still fails. Remove the old key once the old tokens have expired.
+
+If the JWT secret is not `APP_KEY`, pass the old secrets to the driver: `JwtAuthDriver(secret: SecretKey(newSecret), previousSecrets: <JWTKey>[SecretKey(oldSecret)])`.
+
 For web pages, use `SessionAuthDriver()` in the guard. It needs `SessionMiddleware`:
 
 ```dart
