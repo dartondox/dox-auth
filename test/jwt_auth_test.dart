@@ -510,6 +510,99 @@ void main() {
     });
   });
 
+  group('Change APP_KEY |', () {
+    const String oldKey = 'old-app-key-0123456789abcdefghijk';
+    const String newKey = 'new-app-key-0123456789abcdefghijk';
+
+    /// a token for user 1 on the `web` guard, signed like the driver does
+    String oldToken({Duration expiresIn = const Duration(hours: 1)}) {
+      JWTKey key = JwtAuthDriver(secret: SecretKey(oldKey)).signingKey;
+      return JWT(<String, dynamic>{
+        'id': 1,
+      }, audience: Audience.one('web')).sign(key, expiresIn: expiresIn);
+    }
+
+    Future<bool> loggedIn(String token, JwtAuthDriver driver) async {
+      Auth.initialize(
+        AuthConfig(
+          defaultGuard: 'web',
+          guards: <String, AuthGuard>{
+            'web': AuthGuard(
+              driver: driver,
+              provider: AuthProvider(model: () => FakeUser()),
+            ),
+          },
+        ),
+      );
+      Auth auth = Auth();
+      await auth.verifyToken(bearer(token));
+      return auth.isLoggedIn();
+    }
+
+    void appConfig(List<String> previousKeys) {
+      Dox().config = AppConfig(appKey: newKey, previousKeys: previousKeys);
+    }
+
+    test('an old-key token works when the key is in previousKeys', () async {
+      appConfig(<String>[oldKey]);
+      JwtAuthDriver driver = JwtAuthDriver(secret: SecretKey(newKey));
+      expect(await loggedIn(oldToken(), driver), isTrue);
+    });
+
+    test(
+      'an old-key token fails when the key is not in previousKeys',
+      () async {
+        appConfig(<String>[]);
+        JwtAuthDriver driver = JwtAuthDriver(secret: SecretKey(newKey));
+        expect(await loggedIn(oldToken(), driver), isFalse);
+      },
+    );
+
+    test('an expired old-key token is rejected', () async {
+      appConfig(<String>[oldKey]);
+      String token = oldToken(expiresIn: Duration(seconds: -10));
+      JwtAuthDriver driver = JwtAuthDriver(secret: SecretKey(newKey));
+      expect(await loggedIn(token, driver), isFalse);
+    });
+
+    test('a token that matches no key is rejected', () async {
+      appConfig(<String>[oldKey]);
+      String token = JWT(<String, dynamic>{
+        'id': 1,
+      }, audience: Audience.one('web')).sign(SecretKey('some-other-key'));
+      JwtAuthDriver driver = JwtAuthDriver(secret: SecretKey(newKey));
+      expect(await loggedIn(token, driver), isFalse);
+    });
+
+    test('new tokens are signed with the current key', () async {
+      appConfig(<String>[oldKey]);
+      JwtAuthDriver driver = JwtAuthDriver(secret: SecretKey(newKey));
+      expect(await loggedIn(oldToken(), driver), isTrue);
+      String token = Auth().login(users[1]!)!;
+      expect(JWT.verify(token, driver.signingKey).payload['id'], 1);
+      JWTKey old = JwtAuthDriver(secret: SecretKey(oldKey)).signingKey;
+      expect(() => JWT.verify(token, old), throwsA(isA<JWTException>()));
+    });
+
+    test(
+      'previousKeys are not used for a secret that is not APP_KEY',
+      () async {
+        appConfig(<String>[oldKey]);
+        JwtAuthDriver driver = JwtAuthDriver(secret: SecretKey(secret));
+        expect(await loggedIn(oldToken(), driver), isFalse);
+      },
+    );
+
+    test('previousSecrets on the driver works without APP_KEY', () async {
+      appConfig(<String>[]);
+      JwtAuthDriver driver = JwtAuthDriver(
+        secret: SecretKey(secret),
+        previousSecrets: <JWTKey>[SecretKey(oldKey)],
+      );
+      expect(await loggedIn(oldToken(), driver), isTrue);
+    });
+  });
+
   group('AuthMiddleware |', () {
     test('rejects a request with no token', () async {
       expect(
