@@ -91,32 +91,29 @@ class Auth implements IAuth {
     _sessionDriver.login(req, user, _guard);
   }
 
-  /// Log out.
-  /// With `JwtAuthDriver`, the bearer token of [req] is revoked. It is
-  /// kept on a deny-list in the cache until it expires.
-  /// With `SessionAuthDriver`, all session data is removed.
-  /// ```
-  /// await Auth().logout(req);
-  /// ```
-  Future<void> logout(IDoxRequest req) async {
+  /// End the session login. All session data is removed.
+  void logout(DoxRequest req) {
     _userData = null;
-    AuthDriver driver = _driver;
-    if (driver is JwtAuthDriver) {
-      String? header = req.header('Authorization');
-      if (header == null) return;
-      await driver.revokeToken(header.replaceFirst('Bearer ', ''), _guard);
-      return;
-    }
-    SessionAuthDriver session = _sessionDriver;
-    if (req is! DoxRequest) {
-      throw StateError('A session logout needs a DoxRequest.');
-    }
-    session.logout(req);
+    _sessionDriver.logout(req);
+  }
+
+  /// Revoke the bearer token of [req] (a JWT logout). It is kept on a
+  /// deny-list in the cache until it expires. Needs `JwtAuthDriver` with
+  /// `revocation: true`. A request with no token does nothing.
+  /// ```
+  /// await Auth().revokeToken(req);
+  /// ```
+  Future<void> revokeToken(IDoxRequest req) async {
+    JwtAuthDriver driver = _jwtDriver;
+    _userData = null;
+    String? token = req.header('Authorization')?.replaceFirst('Bearer ', '');
+    await driver.revokeToken(token, _guard);
   }
 
   /// Revoke all tokens of the user [id] made before now, on all
   /// servers that share the cache. Use it after a password change or a
-  /// ban. Tokens made after this call work. Needs `JwtAuthDriver`.
+  /// ban. Tokens made after this call work. Needs `JwtAuthDriver` with
+  /// `revocation: true`.
   /// ```
   /// await Auth().revokeAllTokens(user.id);
   /// ```
@@ -126,7 +123,7 @@ class Auth implements IAuth {
 
   /// Drop the user [id] from the `userCacheTtl` cache, so the next
   /// request loads it from the database. Use it after a ban or a
-  /// change to the user. Needs `JwtAuthDriver`.
+  /// change to the user. Needs `JwtAuthDriver` with `revocation: true`.
   /// ```
   /// await Auth().forgetUser(user.id);
   /// ```

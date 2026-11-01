@@ -99,7 +99,10 @@ class FakeAdmin extends FakeUser {
   }
 }
 
-void init({Duration expiresIn = const Duration(hours: 1)}) {
+void init({
+  Duration expiresIn = const Duration(hours: 1),
+  bool revocation = false,
+}) {
   Auth.initialize(
     AuthConfig(
       defaultGuard: 'web',
@@ -108,13 +111,17 @@ void init({Duration expiresIn = const Duration(hours: 1)}) {
           driver: JwtAuthDriver(
             secret: SecretKey(secret),
             expiresIn: expiresIn,
+            revocation: revocation,
           ),
           provider: AuthProvider(model: () => FakeUser()),
         ),
 
         /// same secret on purpose: the guard name must still keep them apart
         'admin': AuthGuard(
-          driver: JwtAuthDriver(secret: SecretKey(secret)),
+          driver: JwtAuthDriver(
+            secret: SecretKey(secret),
+            revocation: revocation,
+          ),
           provider: AuthProvider(model: () => FakeAdmin()),
         ),
       },
@@ -465,6 +472,8 @@ void main() {
   });
 
   group('Revoke tokens |', () {
+    setUp(() => init(revocation: true));
+
     Future<bool> loggedIn(String token) async {
       Auth auth = Auth();
       await auth.verifyToken(bearer(token));
@@ -498,6 +507,7 @@ void main() {
             'web': AuthGuard(
               driver: JwtAuthDriver(
                 secret: SecretKey(secret),
+                revocation: true,
                 revocationStore: 'missing',
               ),
               provider: AuthProvider(model: () => FakeUser()),
@@ -519,23 +529,23 @@ void main() {
       String other = Auth().login(users[1]!)!;
       expect(await loggedIn(token), isTrue);
 
-      await Auth().logout(bearer(token));
+      await Auth().revokeToken(bearer(token));
       expect(await loggedIn(token), isFalse);
       // only this token: another login of the same user still works
       expect(await loggedIn(other), isTrue);
     });
 
     test('the deny-list entry lives as long as the token', () async {
-      init(expiresIn: Duration(minutes: 5));
+      init(expiresIn: Duration(minutes: 5), revocation: true);
       String token = Auth().login(users[1]!)!;
-      await Auth().logout(bearer(token));
+      await Auth().revokeToken(bearer(token));
       String jti = JWT.decode(token).jwtId!;
       expect(await Dox().cache.store().has('auth:revoked:$jti'), isTrue);
     });
 
     test('logout with a bad token does nothing', () async {
-      await Auth().logout(bearer('not-a-jwt'));
-      await Auth().logout(FakeRequest());
+      await Auth().revokeToken(bearer('not-a-jwt'));
+      await Auth().revokeToken(FakeRequest());
     });
 
     test('revokeAllTokens rejects older tokens of the user', () async {
@@ -561,6 +571,7 @@ void main() {
     test('forgetUser drops a banned user from the user cache', () async {
       JwtAuthDriver driver = JwtAuthDriver(
         secret: SecretKey(secret),
+        revocation: true,
         userCacheTtl: Duration(minutes: 1),
       );
       Auth.initialize(
@@ -584,6 +595,7 @@ void main() {
       // another isolate or server forgets the user, through the cache
       JwtAuthDriver otherIsolate = JwtAuthDriver(
         secret: SecretKey(secret),
+        revocation: true,
         userCacheTtl: Duration(minutes: 1),
       );
       await otherIsolate.forgetUser(1, 'web');
@@ -598,6 +610,7 @@ void main() {
             'web': AuthGuard(
               driver: JwtAuthDriver(
                 secret: SecretKey(secret),
+                revocation: true,
                 userCacheTtl: Duration(minutes: 1),
               ),
               provider: AuthProvider(model: () => FakeUser()),
@@ -903,6 +916,8 @@ void main() {
   });
 
   group('Tokens made before 3.0.3 |', () {
+    setUp(() => init(revocation: true));
+
     /// a token made the 3.0.2 way: the whole user, no sub and no jti
     String oldToken({Duration expiresIn = const Duration(hours: 1)}) {
       return JWT(
@@ -929,9 +944,9 @@ void main() {
       expect(await userOf(token), isNull);
     });
 
-    test('logout does nothing, like in 3.0.2', () async {
+    test('revokeToken does nothing to it', () async {
       String token = oldToken();
-      await Auth().logout(bearer(token));
+      await Auth().revokeToken(bearer(token));
       expect(await userOf(token), isNotNull);
     });
 
@@ -957,6 +972,8 @@ void main() {
   });
 
   group('A user with a sub column |', () {
+    setUp(() => init(revocation: true));
+
     setUp(() {
       // user 1 has a sub column that holds the id of user 2
       users[1] = OAuthUser(1, 'a@dox.dev', 2);
@@ -981,12 +998,18 @@ void main() {
       String token = Auth().login(users[1]!)!;
       expect(JWT.decode(token).payload['sub'], 2);
       expect((await userOf(token))?.email, 'a@dox.dev');
-      await Auth().logout(bearer(token));
+      await Auth().revokeToken(bearer(token));
       expect(await userOf(token), isNull);
     });
 
     test('createToken(user.toJson()) uses the primary key', () async {
-      initWith(JwtAuthDriver(secret: SecretKey(secret), minimalPayload: true));
+      initWith(
+        JwtAuthDriver(
+          secret: SecretKey(secret),
+          minimalPayload: true,
+          revocation: true,
+        ),
+      );
       String token = AuthEngine()
           .guard('web')
           .driver
@@ -1021,6 +1044,27 @@ void main() {
       Auth auth = Auth();
       await auth.verifyToken(bearer(Auth().login(user)!));
       expect(auth.user<FakeUser>()?.email, 'a@dox.dev');
+    });
+  });
+
+  group('Revocation off (the default) |', () {
+    test('verifyToken does not read the cache, like 3.0.2', () async {
+      // a store that does not exist: any cache read would fail
+      initWith(
+        JwtAuthDriver(secret: SecretKey(secret), revocationStore: 'missing'),
+      );
+      String token = Auth().login(users[1]!)!;
+      Auth auth = Auth();
+      await expectLater(() => auth.verifyToken(bearer(token)), prints(isEmpty));
+      expect(auth.isLoggedIn(), isTrue);
+    });
+
+    test('the revoke methods throw a StateError', () async {
+      String token = Auth().login(users[1]!)!;
+      await expectLater(Auth().revokeToken(bearer(token)), throwsStateError);
+      await expectLater(Auth().revokeToken(FakeRequest()), throwsStateError);
+      await expectLater(Auth().revokeAllTokens(1), throwsStateError);
+      await expectLater(Auth().forgetUser(1), throwsStateError);
     });
   });
 }

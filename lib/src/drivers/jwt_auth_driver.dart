@@ -66,10 +66,19 @@ class JwtAuthDriver extends AuthDriver {
   /// `verifyToken` does not load the user from the database on every
   /// request. Off (`null`) by default.
   /// A change to the user (eg. delete or ban) is seen only after this
-  /// time, unless you call `Auth().forgetUser(id)`. Each server isolate
+  /// time, unless you call `Auth().forgetUser(id)` (needs [revocation]). Each server isolate
   /// has its own cache. Requests in this time share the same user
   /// object, so do not change it per request.
   final Duration? userCacheTtl;
+
+  /// Turn on token revocation: `Auth().revokeToken(req)`,
+  /// `Auth().revokeAllTokens(id)` and `Auth().forgetUser(id)`. Off by
+  /// default, so `verifyToken` never reads the cache, like in 3.0.2.
+  ///
+  /// When on, `verifyToken` reads [revocationStore] on every request.
+  /// When off, the revoke methods throw a [StateError], so no one thinks
+  /// a token is revoked when it is not.
+  final bool revocation;
 
   /// The name of the store in `AppConfig.cache` that keeps revoked
   /// tokens, the `revokeAllTokens` times and the `forgetUser` times.
@@ -116,6 +125,7 @@ class JwtAuthDriver extends AuthDriver {
     this.previousSecrets,
     this.revocationStore,
     this.minimalPayload = false,
+    this.revocation = false,
   }) {
     /// with an empty key anyone can sign a token for any user
     JWTKey key = secret;
@@ -195,14 +205,17 @@ class JwtAuthDriver extends AuthDriver {
       /// the deny-list, but `revokeAllTokens` still stops it by its `iat`.
       dynamic iat = payload['iat'];
 
-      /// one cache read for all checks
+      /// one cache read for all checks. With [revocation] off there is
+      /// no cache read at all, like in 3.0.2.
       String userKey = '$guard:$id';
       Duration? ttl = userCacheTtl;
-      Map<String, dynamic> found = await _readRevocations(<String>[
-        if (jti is String) _revokedKey(jti),
-        _validAfterKey(userKey),
-        if (ttl != null) _freshAfterKey(userKey),
-      ]);
+      Map<String, dynamic> found = !revocation
+          ? const <String, dynamic>{}
+          : await _readRevocations(<String>[
+              if (jti is String) _revokedKey(jti),
+              _validAfterKey(userKey),
+              if (ttl != null) _freshAfterKey(userKey),
+            ]);
 
       /// logged out
       if (jti is String && found[_revokedKey(jti)] != null) {
@@ -296,10 +309,21 @@ class JwtAuthDriver extends AuthDriver {
   /// Seconds since epoch, like the `iat` and `exp` claims.
   static int _nowSeconds() => DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
+  /// Throws when [revocation] is off.
+  void _needRevocation(String method) {
+    if (revocation) return;
+    throw StateError(
+      '$method needs token revocation. '
+      'Turn it on with JwtAuthDriver(revocation: true).',
+    );
+  }
+
   /// Revoke [token] (eg. on logout). Its `jti` goes on a deny-list in
-  /// the cache until the token expires. A bad or expired token is
-  /// ignored: it does not work anyway.
-  Future<void> revokeToken(String token, String guard) async {
+  /// the cache until the token expires. A bad or expired token, or one
+  /// with no `jti` (made before 3.0.3), is ignored. Needs [revocation].
+  Future<void> revokeToken(String? token, String guard) async {
+    _needRevocation('revokeToken');
+    if (token == null) return;
     Map<String, dynamic> payload;
     try {
       payload = _payload(token, guard);
@@ -317,8 +341,10 @@ class JwtAuthDriver extends AuthDriver {
 
   /// Revoke all tokens of the user [id] made before now (eg. after a
   /// password change or a ban). Tokens made after this call work.
-  /// Also drops the user from [userCacheTtl].
+  /// Also drops the user from [userCacheTtl]. Needs [revocation].
   Future<void> revokeAllTokens(dynamic id, String guard) async {
+    _needRevocation('revokeAllTokens');
+
     /// ponytail: iat is in whole seconds, so a token made in the same
     /// second as this call still works. A ms claim would close it.
     /// kept as long as a new token lives; older tokens expired by then.
@@ -332,8 +358,9 @@ class JwtAuthDriver extends AuthDriver {
 
   /// Drop the user [id] from [userCacheTtl] on all isolates and
   /// servers that share [revocationStore], so the next request loads it
-  /// from the database (eg. after a ban or a delete).
+  /// from the database (eg. after a ban or a delete). Needs [revocation].
   Future<void> forgetUser(dynamic id, String guard) async {
+    _needRevocation('forgetUser');
     String userKey = '$guard:$id';
     _userCache.remove(userKey);
     Duration? ttl = userCacheTtl;
