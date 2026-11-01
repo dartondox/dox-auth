@@ -181,6 +181,22 @@ class RecordingDriver extends JwtAuthDriver {
   }
 }
 
+/// A user table that can not be read, like a database outage.
+class BrokenUser extends FakeUser {
+  @override
+  Future<FakeUser?> find(dynamic arg1, [dynamic arg2]) async {
+    throw StateError('database is down');
+  }
+}
+
+/// Keeps the errors that Dox reports.
+class RecordingExceptionHandler extends ExceptionHandler {
+  final List<Object> errors = <Object>[];
+
+  @override
+  void report(Object error, StackTrace stackTrace) => errors.add(error);
+}
+
 /// claims that the driver needs in a token made by hand
 const Map<String, dynamic> claims = <String, dynamic>{'sub': 1, 'jti': 'j1'};
 
@@ -1077,6 +1093,61 @@ void main() {
       Auth auth = Auth();
       await auth.verifyToken(bearer(token));
       expect(auth.isLoggedIn(), isFalse);
+    });
+  });
+
+  group('verifyToken errors |', () {
+    late RecordingExceptionHandler handler;
+
+    setUp(() {
+      handler = RecordingExceptionHandler();
+      Dox().config = AppConfig(appKey: secret, exceptionHandler: handler);
+    });
+
+    test(
+      'an unexpected error is reported, and the answer is still no user',
+      () async {
+        String token = Auth().login(users[1]!)!;
+        Auth.initialize(
+          AuthConfig(
+            defaultGuard: 'web',
+            guards: <String, AuthGuard>{
+              'web': AuthGuard(
+                driver: JwtAuthDriver(secret: SecretKey(secret)),
+                provider: AuthProvider(model: () => BrokenUser()),
+              ),
+            },
+          ),
+        );
+        Auth auth = Auth();
+        await auth.verifyToken(bearer(token));
+        expect(auth.isLoggedIn(), isFalse);
+        expect(handler.errors, hasLength(1));
+        expect(handler.errors.first.toString(), contains('database is down'));
+      },
+    );
+
+    test('a bad or expired token is not reported', () async {
+      String token = Auth().login(users[1]!)!;
+      String expired = JWT(
+        <String, dynamic>{...claims, 'id': 1},
+        audience: Audience.one('web'),
+      ).sign(signingKey, expiresIn: Duration(seconds: -10));
+      String otherKey = JWT(
+        <String, dynamic>{...claims, 'id': 1},
+        audience: Audience.one('web'),
+      ).sign(SecretKey('another-secret-another-secret-123'));
+      for (String bad in <String>[
+        'not-a-jwt',
+        '${token}x',
+        expired,
+        otherKey,
+      ]) {
+        Auth auth = Auth();
+        await auth.verifyToken(bearer(bad));
+        expect(auth.isLoggedIn(), isFalse, reason: bad);
+      }
+      expect(handler.errors, isEmpty);
     });
   });
 

@@ -16,6 +16,7 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
   - With revocation on, `verifyToken` reads this store on every request, also with `userCacheTtl`. On the default `file` store this is 2 or 3 file reads per request. Use `memory` for one isolate, or `redis` for many. If the store can not be read, the token is checked like in 3.0.2 (signature and `exp`), and a warning is printed once, so a cache outage does not log everyone out.
 - `Auth().logout(req)` is not changed: it is the session logout, like in 3.0.2.
 - Fix: the `Bearer` prefix of the `Authorization` header is matched in any case, so `bearer xyz` works. New `JwtAuthDriver.bearerToken(req)` reads the token.
+- Fix: JWT `verifyToken` no longer hides unexpected errors. A database outage or a bad config still gives no user (a 401), like in 3.0.2, but the error now goes to `AppConfig.exceptionHandler.report` (or stderr before Dox is set up), so you can see it. A bad, changed or expired token is still quiet.
 - `AuthDriver.createToken` gets `user.toJson()`, like in 3.0.2. When the primary key is hidden, the id is added as `sub`.
 
 ## 3.0.2
