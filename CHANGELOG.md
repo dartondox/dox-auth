@@ -1,4 +1,4 @@
-## Unreleased
+## 3.0.1
 
 - `JwtAuthDriver` keeps old tokens working after an `APP_KEY` change. When a token has a wrong signature, it tries each old key from `AppConfig.previousKeys`. New tokens are signed with the current key only. An expired token or a bad claim still fails at once.
 - New `previousSecrets` option on `JwtAuthDriver`, for a JWT secret that is not `APP_KEY`.
