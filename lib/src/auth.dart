@@ -106,7 +106,7 @@ class Auth implements IAuth {
   Future<void> revokeToken(IDoxRequest req) async {
     JwtAuthDriver driver = _jwtDriver;
     _userData = null;
-    String? token = req.header('Authorization')?.replaceFirst('Bearer ', '');
+    String? token = JwtAuthDriver.bearerToken(req);
     await driver.revokeToken(token, _guard);
   }
 

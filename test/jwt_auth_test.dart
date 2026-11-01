@@ -1047,6 +1047,39 @@ void main() {
     });
   });
 
+  group('Bearer prefix |', () {
+    test('any case of the Bearer prefix works', () async {
+      String token = Auth().login(users[1]!)!;
+      for (String prefix in <String>['Bearer', 'bearer', 'BEARER', 'beARer']) {
+        Auth auth = Auth();
+        await auth.verifyToken(
+          FakeRequest(<String, String>{'Authorization': '$prefix $token'}),
+        );
+        expect(auth.isLoggedIn(), isTrue, reason: prefix);
+      }
+    });
+
+    test('a header with no prefix still works, like 3.0.2', () async {
+      String token = Auth().login(users[1]!)!;
+      Auth auth = Auth();
+      await auth.verifyToken(
+        FakeRequest(<String, String>{'Authorization': token}),
+      );
+      expect(auth.isLoggedIn(), isTrue);
+    });
+
+    test('revokeToken reads a lower case prefix', () async {
+      init(revocation: true);
+      String token = Auth().login(users[1]!)!;
+      await Auth().revokeToken(
+        FakeRequest(<String, String>{'Authorization': 'bearer $token'}),
+      );
+      Auth auth = Auth();
+      await auth.verifyToken(bearer(token));
+      expect(auth.isLoggedIn(), isFalse);
+    });
+  });
+
   group('Revocation off (the default) |', () {
     test('verifyToken does not read the cache, like 3.0.2', () async {
       // a store that does not exist: any cache read would fail

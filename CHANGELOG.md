@@ -15,6 +15,7 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
   - New optional `JwtAuthDriver(revocationStore: ...)` picks the cache store. Give auth its own store and never flush it: a flush, or a full `memory` store with `max_size`, brings revoked tokens back. Use a shared store like `redis` with many isolates or servers.
   - With revocation on, `verifyToken` reads this store on every request, also with `userCacheTtl`. On the default `file` store this is 2 or 3 file reads per request. Use `memory` for one isolate, or `redis` for many. If the store can not be read, the token is checked like in 3.0.2 (signature and `exp`), and a warning is printed once, so a cache outage does not log everyone out.
 - `Auth().logout(req)` is not changed: it is the session logout, like in 3.0.2.
+- Fix: the `Bearer` prefix of the `Authorization` header is matched in any case, so `bearer xyz` works. New `JwtAuthDriver.bearerToken(req)` reads the token.
 - `AuthDriver.createToken` gets `user.toJson()`, like in 3.0.2. When the primary key is hidden, the id is added as `sub`.
 
 ## 3.0.2

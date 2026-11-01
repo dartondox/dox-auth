@@ -168,6 +168,15 @@ class JwtAuthDriver extends AuthDriver {
     print('[dox] warning: $message');
   }
 
+  static final RegExp _bearerPrefix = RegExp(r'^bearer ', caseSensitive: false);
+
+  /// The token in the `Authorization` header of [req], or null.
+  /// The `Bearer ` prefix is matched in any case (`bearer`, `BEARER`).
+  /// A header with no prefix is used as it is, like in 3.0.2.
+  static String? bearerToken(IDoxRequest req) {
+    return req.header('Authorization')?.replaceFirst(_bearerPrefix, '');
+  }
+
   /// verify token and get model from provider
   /// and get user data
   @override
@@ -176,7 +185,7 @@ class JwtAuthDriver extends AuthDriver {
       AuthProvider provider = AuthEngine().guard(guard).provider;
 
       /// get token from header
-      String? token = req.header('Authorization')?.replaceFirst('Bearer ', '');
+      String? token = bearerToken(req);
 
       /// if not token just return
       if (token == null) {
