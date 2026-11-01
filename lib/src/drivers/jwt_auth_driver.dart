@@ -157,8 +157,8 @@ class JwtAuthDriver extends AuthDriver {
       /// get model from provider
       Model<dynamic> model = provider.model();
 
-      /// get id from payload
-      dynamic id = payload[model.primaryKey];
+      /// the user id. The token has no other user data.
+      dynamic id = payload['sub'];
 
       if (id == null) {
         return null;
@@ -237,10 +237,18 @@ class JwtAuthDriver extends AuthDriver {
   /// ```
   /// String token = auth.login(user);
   /// ```
+  /// Only the user id in `userPayload['sub']` goes into the token. Other
+  /// keys are dropped, because anyone can read the payload.
   @override
   String? createToken(Map<String, dynamic>? userPayload, String guard) {
+    dynamic id = userPayload?['sub'];
+    if (id == null) return null;
     try {
-      JWT jwt = JWT(userPayload, issuer: issuer, audience: Audience.one(guard));
+      JWT jwt = JWT(
+        <String, dynamic>{'sub': id},
+        issuer: issuer,
+        audience: Audience.one(guard),
+      );
       return jwt.sign(signingKey, algorithm: algorithm, expiresIn: expiresIn);
     } catch (error) {
       return null;

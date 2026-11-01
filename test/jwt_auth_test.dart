@@ -134,7 +134,7 @@ void main() {
   });
 
   group('JwtAuthDriver |', () {
-    test('login issues a token with the user payload and no hidden fields', () {
+    test('login issues a token with the user id and no user columns', () {
       String? token = Auth().login(users[1]!);
       expect(token, isNotNull);
       JWT jwt = JWT.verify(token!, signingKey);
@@ -143,9 +143,23 @@ void main() {
         () => JWT.verify(token, SecretKey(secret)),
         throwsA(isA<JWTException>()),
       );
-      expect(jwt.payload['id'], 1);
-      expect(jwt.payload['email'], 'a@dox.dev');
+      expect(jwt.payload['sub'], 1);
+      // anyone can read the payload, so no user columns are in it
+      expect(jwt.payload.containsKey('id'), isFalse);
+      expect(jwt.payload.containsKey('email'), isFalse);
       expect(jwt.payload.containsKey('password'), isFalse);
+    });
+
+    test('createToken drops every key but the user id', () {
+      JwtAuthDriver driver = JwtAuthDriver(secret: SecretKey(secret));
+      String token = driver.createToken(<String, dynamic>{
+        'sub': 1,
+        'email': 'a@dox.dev',
+      }, 'web')!;
+      Map<String, dynamic> payload = JWT.decode(token).payload;
+      expect(payload['sub'], 1);
+      expect(payload.containsKey('email'), isFalse);
+      expect(driver.createToken(<String, dynamic>{'id': 1}, 'web'), isNull);
     });
 
     test('verifyToken finds the user for a good token', () async {
@@ -173,7 +187,7 @@ void main() {
     test(
       'verifyToken with a token signed by another secret is rejected',
       () async {
-        String token = JWT(<String, dynamic>{'id': 1})
+        String token = JWT(<String, dynamic>{'sub': 1})
             .sign(SecretKey('other-secret'));
         Auth auth = Auth();
         await auth.verifyToken(bearer(token));
@@ -451,7 +465,7 @@ void main() {
     });
 
     test('a token with no guard audience is rejected', () async {
-      String token = JWT(<String, dynamic>{'id': 1}).sign(signingKey);
+      String token = JWT(<String, dynamic>{'sub': 1}).sign(signingKey);
       Auth auth = Auth();
       await auth.verifyToken(bearer(token));
       expect(auth.isLoggedIn(), isFalse);
@@ -459,7 +473,7 @@ void main() {
 
     test('a token signed with the raw secret is rejected', () async {
       String token = JWT(<String, dynamic>{
-        'id': 1,
+        'sub': 1,
       }, audience: Audience.one('web')).sign(SecretKey(secret));
       Auth auth = Auth();
       await auth.verifyToken(bearer(token));
@@ -467,7 +481,7 @@ void main() {
     });
 
     test('a token with another algorithm is rejected', () async {
-      JWT jwt = JWT(<String, dynamic>{'id': 1}, audience: Audience.one('web'));
+      JWT jwt = JWT(<String, dynamic>{'sub': 1}, audience: Audience.one('web'));
       Auth good = Auth();
       await good.verifyToken(bearer(jwt.sign(signingKey)));
       expect(good.isLoggedIn(), isTrue);
@@ -518,7 +532,7 @@ void main() {
     String oldToken({Duration expiresIn = const Duration(hours: 1)}) {
       JWTKey key = JwtAuthDriver(secret: SecretKey(oldKey)).signingKey;
       return JWT(<String, dynamic>{
-        'id': 1,
+        'sub': 1,
       }, audience: Audience.one('web')).sign(key, expiresIn: expiresIn);
     }
 
@@ -568,7 +582,7 @@ void main() {
     test('a token that matches no key is rejected', () async {
       appConfig(<String>[oldKey]);
       String token = JWT(<String, dynamic>{
-        'id': 1,
+        'sub': 1,
       }, audience: Audience.one('web')).sign(SecretKey('some-other-key'));
       JwtAuthDriver driver = JwtAuthDriver(secret: SecretKey(newKey));
       expect(await loggedIn(token, driver), isFalse);
@@ -579,7 +593,7 @@ void main() {
       JwtAuthDriver driver = JwtAuthDriver(secret: SecretKey(newKey));
       expect(await loggedIn(oldToken(), driver), isTrue);
       String token = Auth().login(users[1]!)!;
-      expect(JWT.verify(token, driver.signingKey).payload['id'], 1);
+      expect(JWT.verify(token, driver.signingKey).payload['sub'], 1);
       JWTKey old = JwtAuthDriver(secret: SecretKey(oldKey)).signingKey;
       expect(() => JWT.verify(token, old), throwsA(isA<JWTException>()));
     });

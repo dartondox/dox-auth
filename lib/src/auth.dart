@@ -110,10 +110,15 @@ class Auth implements IAuth {
     return _userData?.toJson();
   }
 
+  /// The token has only the user id (the `sub` claim), not the user
+  /// columns. Anyone can read a JWT payload, and a small token is
+  /// cheaper to send on each request.
   String? _createToken() {
-    if (_userData == null) {
+    Model<dynamic>? user = _userData;
+    if (user == null) {
       return null;
     }
-    return _driver.createToken(_userData?.toJson(), _guard);
+    dynamic id = user.toMap(original: true)[user.primaryKey];
+    return _driver.createToken(<String, dynamic>{'sub': id}, _guard);
   }
 }

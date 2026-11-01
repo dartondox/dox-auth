@@ -86,6 +86,7 @@ Route.get('/dashboard', <dynamic>[AuthMiddleware(redirectTo: '/login'), pageCont
 - Gates and policies for authorization, with the `Can` middleware and `req.can`.
 
 Things to know: a token expires after 1 hour by default. Change it with `expiresIn`.
+A token holds only the user id (the `sub` claim), never the user columns. Anyone can read a token, so do not look for user data in it. Use `req.auth?.user<User>()`.
 There is no server list of tokens, so you can not cancel one token.
 A session login ends with `Auth().logout(req)`.
 With the default `cookie` session driver, all session data sits in the cookie. So an old copy of the cookie still works after logout. If logout must really end old cookies, use the `cache` session driver, like `SessionConfig(driver: 'cache', store: 'redis')`.

@@ -1,3 +1,7 @@
+## Unreleased
+
+- Breaking, security: a JWT now holds only the user id, in the `sub` claim. Before, it held every visible column of the user, and anyone can read a JWT payload. Old tokens have no `sub`, so they stop working. Users must log in again. Code that read user fields from the token payload must load the user instead (`req.auth?.user<User>()`).
+
 ## 3.0.2
 
 - New: gates and policies, for what a user may do.
