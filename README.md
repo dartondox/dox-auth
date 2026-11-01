@@ -170,7 +170,7 @@ User? user = await Auth(guard: 'api').userFromToken(token);   // a JWT, no `Bear
 User? user = await Auth(guard: 'web').userFromSession(session); // from SessionMiddleware().fromCookie(value)
 ```
 
-`userFromToken` runs the same checks as a request with a `Bearer` header. A missing, bad, expired, revoked or changed token gives `null`.
+`userFromToken` runs the same checks as a request with a `Bearer` header. A missing, bad, expired, revoked or changed token gives `null`. `userCacheTtl` is a cache, not a check: with it on, a deleted or banned user can still connect until the cache time ends, unless `forgetUser` runs.
 
 ## Custom guard (API key)
 

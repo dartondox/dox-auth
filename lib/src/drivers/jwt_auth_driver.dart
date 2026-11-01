@@ -181,7 +181,7 @@ class JwtAuthDriver extends AuthDriver {
   /// verify token and get model from provider
   /// and get user data
   @override
-  Future<Model<dynamic>?> verifyToken(IDoxRequest req, String guard) {
+  Future<Model<dynamic>?> verifyToken(IDoxRequest req, String guard) async {
     return userFromToken(bearerToken(req), guard);
   }
 

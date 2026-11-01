@@ -495,11 +495,15 @@ void main() {
       expect(await Auth().userFromToken<FakeUser>(token), isNull);
     });
 
-    test('a token with alg none gives null', () async {
-      String token = JWT(
-        <String, dynamic>{'id': 1, 'jti': 'j1'},
-        audience: Audience.one('web'),
-      ).sign(SecretKey('x'), algorithm: JWTAlgorithm.HS512);
+    test('a token with alg none or another algorithm gives null', () async {
+      JWT jwt = JWT(<String, dynamic>{
+        'id': 1,
+        'jti': 'j1',
+      }, audience: Audience.one('web'));
+      // the right key and HS256 work, so only the algorithm is wrong below
+      String good = jwt.sign(signingKey);
+      expect(await Auth().userFromToken<FakeUser>(good), isNotNull);
+      String token = jwt.sign(signingKey, algorithm: JWTAlgorithm.HS512);
       String none =
           '${base64Url.encode(utf8.encode('{"alg":"none","typ":"JWT"}')).replaceAll('=', '')}'
           '.${token.split('.')[1]}.';
