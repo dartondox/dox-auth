@@ -1,5 +1,6 @@
 // ignore_for_file: depend_on_referenced_packages
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:dox_auth/dox_auth.dart';
 import 'package:dox_core/dox_core.dart';
@@ -73,6 +74,15 @@ class FakeRequest implements IDoxRequest {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// A request with two `Authorization` headers: reading it throws, like
+/// `HttpHeaders.value` does.
+class TwoHeaderRequest extends FakeRequest {
+  @override
+  String? header(String key) {
+    throw HttpException('More than one value for header $key');
+  }
 }
 
 FakeRequest bearer(String? token) {
@@ -1314,6 +1324,13 @@ void main() {
     setUp(() {
       handler = RecordingExceptionHandler();
       Dox().config = AppConfig(appKey: secret, exceptionHandler: handler);
+    });
+
+    test('two Authorization headers: no user, error reported', () async {
+      Auth auth = Auth();
+      await auth.verifyToken(TwoHeaderRequest());
+      expect(auth.isLoggedIn(), isFalse);
+      expect(handler.errors.single, isA<HttpException>());
     });
 
     test(

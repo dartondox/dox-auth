@@ -182,7 +182,16 @@ class JwtAuthDriver extends AuthDriver {
   /// and get user data
   @override
   Future<Model<dynamic>?> verifyToken(IDoxRequest req, String guard) async {
-    return userFromToken(bearerToken(req), guard);
+    String? token;
+    try {
+      token = bearerToken(req);
+    } catch (error, stackTrace) {
+      /// eg. two `Authorization` headers. A 401, like in 3.0.2, but the
+      /// error is reported.
+      _reportError(error, stackTrace);
+      return null;
+    }
+    return userFromToken(token, guard);
   }
 
   /// The user of [token], or null. Same checks as [verifyToken], with no
