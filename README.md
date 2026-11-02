@@ -150,7 +150,7 @@ A token looks like `oat_12.<secret>`. The table keeps only a SHA-256 hash of the
 Run `dox auth:tokens-table`. It writes a migration in `db/migration` that makes the `auth_access_tokens` table. Then run `dox migrate`.
 
 ```bash
-dox auth:tokens-table
+dox auth:tokens-table --users-table=users
 dox migrate
 ```
 
@@ -163,7 +163,7 @@ Flags:
 - `--users-table=users`: adds a foreign key to this table (`usersTable:`).
 - `--users-key=uid`: the key column of the users table, when it is not `id` (`usersKey:`).
 
-For other options, like `table:`, edit the migration file. The migration it writes looks like this. You can also write it by hand. `AccessTokenTables` makes the table.
+For other options, like `table:`, edit the migration file. With `--users-table=users`, the migration it writes looks like this. You can also write it by hand. `AccessTokenTables` makes the table.
 
 `db/migration/2026_11_02_000000000_create_access_tokens_table.dart`:
 
@@ -176,7 +176,7 @@ import 'package:dox_migration/dox_migration.dart';
 class CreateAccessTokensTable extends Migration {
   @override
   Future<void> up(Schema schema) async {
-    await AccessTokenTables.up(schema);
+    await AccessTokenTables.up(schema, usersTable: 'users');
   }
 
   @override
@@ -236,6 +236,7 @@ auth.currentAccessToken; // the AccessToken of this request
 - `last_used_at` is written at most once a minute per token. If this write fails, the error is reported and the request goes on.
 - `Auth().login(user)` throws a `StateError` with this driver. Use `createAccessToken`.
 - Expired tokens stay in the table until you call `pruneExpiredAccessTokens()`.
+- On MySQL, `expires_at` is kept to the second: MySQL rounds the time. So a token can stop working up to half a second before or after its exact time.
 
 ### Login throttle
 
