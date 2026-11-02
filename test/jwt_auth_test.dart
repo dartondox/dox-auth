@@ -1026,6 +1026,37 @@ void main() {
     });
   });
 
+  group('id and guest |', () {
+    test('a guest has no id', () async {
+      Auth auth = Auth();
+      await auth.verifyToken(FakeRequest());
+      expect(auth.guest(), isTrue);
+      expect(auth.id(), isNull);
+    });
+
+    test('a bad token is a guest', () async {
+      Auth auth = Auth();
+      await auth.verifyToken(bearer('bad.token.here'));
+      expect(auth.guest(), isTrue);
+      expect(auth.id(), isNull);
+    });
+
+    test('a logged-in user gives the primary key', () async {
+      String token = Auth().login(users[1]!)!;
+      Auth auth = Auth();
+      await auth.verifyToken(bearer(token));
+      expect(auth.guest(), isFalse);
+      expect(auth.id(), 1);
+    });
+
+    test('the id is read when the primary key is hidden', () {
+      FakeUser user = FakeUser(7, 'h@dox.dev')
+        ..hidden = <String>['id', 'password'];
+      Auth auth = Auth()..login(user);
+      expect(auth.id(), 7);
+    });
+  });
+
   group('AuthMiddleware |', () {
     test('rejects a request with no token', () async {
       expect(
@@ -1315,6 +1346,83 @@ void main() {
       );
       await Future<void>.delayed(Duration(milliseconds: 1100));
       expect(await Auth(ip: '1.1.1.1').attempt(right), isNotNull);
+    });
+  });
+
+  group('Optional AuthMiddleware |', () {
+    test('a guest goes on with no req.auth', () async {
+      FakeRequest req = FakeRequest();
+      expect(await AuthMiddleware(optional: true).handle(req), same(req));
+      expect(req.auth, isNull);
+    });
+
+    test('a bad token goes on as a guest', () async {
+      FakeRequest req = bearer('bad.token.here');
+      expect(await AuthMiddleware(optional: true).handle(req), same(req));
+      expect(req.auth, isNull);
+    });
+
+    test('a good token sets req.auth', () async {
+      String token = Auth().login(users[1]!)!;
+      FakeRequest req = bearer(token);
+      await AuthMiddleware(optional: true).handle(req);
+      expect((req.auth! as Auth).id(), 1);
+    });
+
+    test('a database error goes on as a guest, and is reported', () async {
+      RecordingExceptionHandler handler = RecordingExceptionHandler();
+      Dox().config = AppConfig(appKey: secret, exceptionHandler: handler);
+      String token = Auth().login(users[1]!)!;
+      Auth.initialize(
+        AuthConfig(
+          defaultGuard: 'web',
+          guards: <String, AuthGuard>{
+            'web': AuthGuard(
+              driver: JwtAuthDriver(secret: SecretKey(secret)),
+              provider: AuthProvider(model: () => BrokenUser()),
+            ),
+          },
+        ),
+      );
+      FakeRequest req = bearer(token);
+      await AuthMiddleware(optional: true).handle(req);
+      expect(req.auth, isNull);
+      expect(handler.errors.single.toString(), contains('database is down'));
+    });
+  });
+
+  group('GuestMiddleware |', () {
+    test('lets a guest through', () async {
+      FakeRequest req = FakeRequest();
+      expect(await GuestMiddleware().handle(req), same(req));
+    });
+
+    test('lets a bad token through as a guest', () async {
+      FakeRequest req = bearer('bad.token.here');
+      expect(await GuestMiddleware().handle(req), same(req));
+    });
+
+    test('gives a 403 to a logged-in user', () async {
+      String token = Auth().login(users[1]!)!;
+      await expectLater(
+        () => GuestMiddleware().handle(bearer(token)),
+        throwsA(
+          isA<ForbiddenHttpException>()
+              .having((ForbiddenHttpException e) => e.code, 'code', 403)
+              .having(
+                (ForbiddenHttpException e) => e.errorCode,
+                'errorCode',
+                'already_logged_in',
+              ),
+        ),
+      );
+    });
+
+    test('uses its guard', () async {
+      String token = Auth().login(users[1]!)!;
+      // a web token is not a login on the admin guard
+      FakeRequest req = bearer(token);
+      expect(await GuestMiddleware(guard: 'admin').handle(req), same(req));
     });
   });
 
