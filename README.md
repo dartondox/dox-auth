@@ -135,7 +135,23 @@ A token looks like `oat_12.<secret>`. The table keeps only a SHA-256 hash of the
 
 #### 2. Table
 
-Add a migration in `db/migration`. `AccessTokenTables` makes the `auth_access_tokens` table.
+Run `dox auth:tokens-table`. It writes a migration in `db/migration` that makes the `auth_access_tokens` table. Then run `dox migrate`.
+
+```bash
+dox auth:tokens-table
+dox migrate
+```
+
+`auth:tokens-table` is a [package command](https://dartondox.dev/digging-deeper/package-commands/) of `dox_auth`. It does not overwrite: when a `create_access_tokens_table` migration is already there, it prints so and stops.
+
+Flags:
+
+- `--uuid`: for users with uuid ids (`uuidIds: true`).
+- `--string-ids`: for users with text ids (`stringIds: true`).
+- `--users-table=users`: adds a foreign key to this table (`usersTable:`).
+- `--users-key=uid`: the key column of the users table, when it is not `id` (`usersKey:`).
+
+For other options, like `table:`, edit the migration file. The migration it writes looks like this. You can also write it by hand. `AccessTokenTables` makes the table.
 
 `db/migration/2026_11_02_000000000_create_access_tokens_table.dart`:
 
@@ -158,7 +174,7 @@ class CreateAccessTokensTable extends Migration {
 }
 ```
 
-Then run `dox migrate`. Options of `AccessTokenTables.up`:
+Options of `AccessTokenTables.up`:
 
 - `table: 'tokens'`: when the driver uses another table (`AccessTokenAuthDriver(table: 'tokens')`), pass the same name.
 - `stringIds: true`: for users with text ids. Set `AccessTokenAuthDriver(stringIds: true)` too. By default `tokenable_id` is an unsigned big int, like Sanctum and AdonisJS.
