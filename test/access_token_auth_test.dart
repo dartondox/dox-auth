@@ -501,6 +501,19 @@ void tests(String connection) {
     expect(await Auth().userFromToken<FakeUser>(token.value), isNull);
   });
 
+  test(
+    'revokeToken after userFromToken revokes the token of the request',
+    () async {
+      AccessToken first = await Auth().createAccessToken(alice);
+      AccessToken second = await Auth().createAccessToken(alice);
+      Auth auth = Auth();
+      await auth.userFromToken<FakeUser>(first.value);
+      await auth.revokeToken(bearer(second.value));
+      expect((await verify(first.value)).isLoggedIn(), isTrue);
+      expect((await verify(second.value)).isLoggedIn(), isFalse);
+    },
+  );
+
   test('a user id of the wrong type is an error', () async {
     expect(
       () => Auth(guard: 'text').createAccessToken(alice),

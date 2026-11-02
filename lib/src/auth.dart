@@ -68,6 +68,10 @@ class Auth implements IAuth {
 
   AccessToken? _accessToken;
 
+  /// the token that [verifyToken] found for the request, for
+  /// [revokeToken]. [userFromToken] does not set it.
+  AccessToken? _requestToken;
+
   @override
   Future<void> verifyToken(IDoxRequest req) async {
     AuthDriver driver = _driver;
@@ -75,9 +79,8 @@ class Auth implements IAuth {
     if (driver is AccessTokenAuthDriver) {
       AccessToken? token = AccessTokenAuthDriver.tokenOf(req);
       Model<dynamic>? user = _userData;
-      _accessToken = user != null && identical(token?.user, user)
-          ? token
-          : null;
+      _accessToken = _requestToken =
+          user != null && identical(token?.user, user) ? token : null;
     }
   }
 
@@ -316,9 +319,11 @@ class Auth implements IAuth {
     AuthDriver current = _driver;
     if (current is AccessTokenAuthDriver) {
       /// the token of `verifyToken` (eg. from `AuthMiddleware`), so it
-      /// is not checked again. Else the driver checks the request, with
-      /// its own `verifyToken` (a bad header gives no token, not an error).
-      AccessToken? found = _accessToken;
+      /// is not checked again. A token of `userFromToken` is not used: it
+      /// is not the token of the request. Else the driver checks the
+      /// request, with its own `verifyToken` (a bad header gives no
+      /// token, not an error).
+      AccessToken? found = _requestToken;
       if (found == null) {
         Model<dynamic>? user = await current.verifyToken(req, _guard);
         AccessToken? token = AccessTokenAuthDriver.tokenOf(req);
@@ -329,7 +334,7 @@ class Auth implements IAuth {
         await current.revoke(user, _guard, found.id);
       }
       _userData = null;
-      _accessToken = null;
+      _accessToken = _requestToken = null;
       return;
     }
     JwtAuthDriver driver = _jwtDriver;
