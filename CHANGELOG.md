@@ -4,13 +4,14 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
 
 - New, opt-in: access tokens, like AdonisJS access tokens or Laravel Sanctum. Session and JWT guards do not change.
   - New `AccessTokenAuthDriver`. A token looks like `oat_<id>.<secret>`. The table keeps only a SHA-256 hash of the secret, checked in constant time. The plain token is shown once.
-  - New `AccessTokenTables.up(schema)` and `down(schema)` for a migration. The default table is `auth_access_tokens`.
+  - New `AccessTokenTables.up(schema)` and `down(schema)` for a migration. The default table is `auth_access_tokens`. `tokenable_id` is an unsigned big int. `stringIds: true` (on the table and the driver) makes it text, for uuid users. `usersTable:` adds a foreign key with cascade delete.
   - Each token has a `type` (default: the guard name, or `AccessTokenAuthDriver(type: ...)`). A token works only on a guard with the same type.
   - The time columns are `DATETIME` on MySQL, so a token can expire after 2038.
-  - New `Auth().createAccessToken(user, name:, abilities:, expiresIn:)`, `accessTokens(user)`, `revokeAccessToken(user, id)`, `revokeAllAccessTokens(user)`, `tokenCan(ability)` and `currentAccessToken`.
+  - New `Auth().createAccessToken(user, name:, abilities:, expiresIn:)`, `accessTokens(user)`, `revokeAccessToken(user, id)`, `revokeAllAccessTokens(user)`, `pruneExpiredAccessTokens()`, `tokenCan(ability)` and `currentAccessToken`.
   - `Auth().attempt(credentials)` gives an access token with this driver. `Auth().revokeToken(req)` revokes the access token of the request.
   - A bad, wrong, expired or revoked token gives no user (401). A database error does too, and it is reported.
   - New `AccessTokenAuthDriver.check(token, guard)` checks a token without a request.
+  - A failed `last_used_at` write is reported, and the request goes on.
 - New `AuthDriver.reportError(error, stackTrace)`: the JWT driver now uses it to report errors.
 - New dependency: `crypto`.
 - By default a JWT holds the same data as in 3.0.2: the user (`toJson()`, hidden fields left out), plus `iat`, `exp` and a new `jti`. A front end that reads user fields from the token still works.

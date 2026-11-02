@@ -71,13 +71,14 @@ class Auth implements IAuth {
   @override
   Future<void> verifyToken(IDoxRequest req) async {
     AuthDriver driver = _driver;
-    if (driver is AccessTokenAuthDriver) {
-      String? token = JwtAuthDriver.bearerToken(req);
-      _accessToken = token == null ? null : await driver.check(token, _guard);
-      _userData = _accessToken?.user;
-      return;
-    }
     _userData = await driver.verifyToken(req, _guard);
+    if (driver is AccessTokenAuthDriver) {
+      AccessToken? token = AccessTokenAuthDriver.tokenOf(req);
+      Model<dynamic>? user = _userData;
+      _accessToken = user != null && identical(token?.user, user)
+          ? token
+          : null;
+    }
   }
 
   /// true when the access token of this request has [ability] (or `*`).
@@ -127,6 +128,13 @@ class Auth implements IAuth {
   /// has no token with this id. Needs `AccessTokenAuthDriver`.
   Future<bool> revokeAccessToken(Model<dynamic> user, int id) {
     return _accessTokenDriver.revoke(user, _guard, id);
+  }
+
+  /// Delete the expired access tokens of the table of this guard.
+  /// Gives how many were deleted. Run it from a scheduled job.
+  /// Needs `AccessTokenAuthDriver`.
+  Future<int> pruneExpiredAccessTokens() {
+    return _accessTokenDriver.pruneExpired();
   }
 
   /// Revoke (delete) all access tokens of [user], eg. after a password
@@ -275,7 +283,9 @@ class Auth implements IAuth {
   /// - `JwtAuthDriver` (needs `revocation: true`): the token is kept on
   ///   a deny-list in the cache until it expires.
   /// - `AccessTokenAuthDriver`: the token row is deleted. A token that
-  ///   does not check out does nothing.
+  ///   does not check out does nothing. On the `Auth` of `AuthMiddleware`
+  ///   (`(req.auth as Auth).revokeToken(req)`) it uses the token that
+  ///   was already checked, with no second check.
   ///
   /// A request with no token does nothing.
   /// ```
@@ -285,9 +295,12 @@ class Auth implements IAuth {
     AuthDriver current = _driver;
     if (current is AccessTokenAuthDriver) {
       String? token = JwtAuthDriver.bearerToken(req);
-      AccessToken? found = token == null
-          ? null
-          : await current.check(token, _guard);
+
+      /// the token of `verifyToken` (eg. from `AuthMiddleware`), so it
+      /// is not checked again
+      AccessToken? found =
+          _accessToken ??
+          (token == null ? null : await current.check(token, _guard));
       Model<dynamic>? user = found?.user;
       if (found != null && user != null) {
         await current.revoke(user, _guard, found.id);

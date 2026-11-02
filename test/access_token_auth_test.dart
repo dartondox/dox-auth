@@ -46,6 +46,31 @@ DatabaseConfig dbConfig = DatabaseConfig(
 
 const String table = 'test_access_tokens';
 
+/// `stringIds: true`
+const String textTable = 'test_access_tokens_text';
+
+/// `usersTable:` with a foreign key to [usersTable]
+const String fkTable = 'test_access_tokens_fk';
+const String usersTable = 'test_at_users';
+
+/// Its own `verifyToken` that lets no one in.
+class ClosedDriver extends AccessTokenAuthDriver {
+  ClosedDriver({super.table, super.connection});
+
+  @override
+  Future<Model<dynamic>?> verifyToken(IDoxRequest req, String guard) async {
+    return null;
+  }
+}
+
+/// rows of [sql] as one int, eg. a COUNT(*)
+Future<int> count(String connection, String sql) async {
+  List<Map<String, dynamic>> rows = await SqlQueryBuilder()
+      .getDBDriver(connection)
+      .query(sql);
+  return int.parse('${rows.single.values.first}');
+}
+
 /// Users with a text id, that can hold only digits.
 final Map<String, TextUser> textUsers = <String, TextUser>{};
 
@@ -98,8 +123,20 @@ void useConnection(String connection) {
           provider: AuthProvider(model: () => FakeUser()),
         ),
         'text': AuthGuard(
-          driver: driver(null),
+          driver: AccessTokenAuthDriver(
+            table: textTable,
+            connection: connection,
+            stringIds: true,
+          ),
           provider: AuthProvider(model: () => TextUser()),
+        ),
+        'fk': AuthGuard(
+          driver: AccessTokenAuthDriver(table: fkTable, connection: connection),
+          provider: AuthProvider(model: () => FakeUser()),
+        ),
+        'closed': AuthGuard(
+          driver: ClosedDriver(table: table, connection: connection),
+          provider: AuthProvider(model: () => FakeUser()),
         ),
         'short': AuthGuard(
           driver: driver(const Duration(hours: 1)),
@@ -145,6 +182,12 @@ void tests(String connection) {
     Schema schema = Schema(SqlQueryBuilder().getDBDriver(connection));
     await AccessTokenTables.down(schema, table: table);
     await AccessTokenTables.up(schema, table: table);
+    await AccessTokenTables.down(schema, table: textTable);
+    await AccessTokenTables.up(schema, table: textTable, stringIds: true);
+    await AccessTokenTables.down(schema, table: fkTable);
+    await schema.dropIfExists(usersTable);
+    await schema.create(usersTable, (Table t) => t.id());
+    await AccessTokenTables.up(schema, table: fkTable, usersTable: usersTable);
   });
 
   setUp(() async {
@@ -152,6 +195,9 @@ void tests(String connection) {
     await SqlQueryBuilder()
         .getDBDriver(connection)
         .execute('DELETE FROM $table');
+    await SqlQueryBuilder()
+        .getDBDriver(connection)
+        .execute('DELETE FROM $textTable');
     users.clear();
     textUsers.clear();
     admins.clear();
@@ -256,18 +302,119 @@ void tests(String connection) {
     expect((await verify(token.value, guard: 'renamed')).isLoggedIn(), isTrue);
   });
 
-  test('a text id with only digits stays text', () async {
+  test('an int id is an int column, plain SQL finds it', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    expect(token.tokenableId, 1);
+    expect((await Auth().accessTokens(alice)).single.tokenableId, 1);
+    expect(
+      await count(
+        connection,
+        'SELECT COUNT(*) AS c FROM $table WHERE tokenable_id = 1',
+      ),
+      1,
+    );
+  });
+
+  test('a text id stays text, plain SQL finds it', () async {
     TextUser user = textUsers['123'] = TextUser('123');
     AccessToken token = await Auth(guard: 'text').createAccessToken(user);
-    expect(token.tokenableId, '"123"');
+    expect(token.tokenableId, '123');
     Auth auth = await verify(token.value, guard: 'text');
     expect(TextUser.lastFindType, String);
     expect(auth.user<TextUser>()?.id, '123');
-
-    AccessToken own = await Auth().createAccessToken(alice);
-    expect(own.tokenableId, '1');
     expect(await Auth(guard: 'text').accessTokens(user), hasLength(1));
+    expect(
+      await count(
+        connection,
+        "SELECT COUNT(*) AS c FROM $textTable WHERE tokenable_id = '123'",
+      ),
+      1,
+    );
   });
+
+  test('text ids are compared exactly (case)', () async {
+    TextUser lower = textUsers['abc'] = TextUser('abc');
+    TextUser upper = textUsers['ABC'] = TextUser('ABC');
+    AccessToken token = await Auth(guard: 'text').createAccessToken(lower);
+    expect(await Auth(guard: 'text').accessTokens(upper), isEmpty);
+    expect(
+      await Auth(guard: 'text').revokeAccessToken(upper, token.id),
+      isFalse,
+    );
+    expect(await Auth(guard: 'text').revokeAllAccessTokens(upper), 0);
+    Auth auth = await verify(token.value, guard: 'text');
+    expect(auth.user<TextUser>()?.id, 'abc');
+  });
+
+  test('a user id of the wrong type is an error', () async {
+    expect(
+      () => Auth(guard: 'text').createAccessToken(alice),
+      throwsArgumentError,
+    );
+    expect(() => Auth().createAccessToken(TextUser('1')), throwsArgumentError);
+  });
+
+  test('usersTable: deleting the user deletes the tokens', () async {
+    DBDriver db = SqlQueryBuilder().getDBDriver(connection);
+    await db.execute('DELETE FROM $fkTable');
+    await db.execute('DELETE FROM $usersTable');
+    await db.execute('INSERT INTO $usersTable (id) VALUES (1)');
+    AccessToken token = await Auth(guard: 'fk').createAccessToken(alice);
+    expect((await verify(token.value, guard: 'fk')).isLoggedIn(), isTrue);
+    await db.execute('DELETE FROM $usersTable WHERE id = 1');
+    expect(await count(connection, 'SELECT COUNT(*) AS c FROM $fkTable'), 0);
+    expect((await verify(token.value, guard: 'fk')).isLoggedIn(), isFalse);
+  });
+
+  test('pruneExpiredAccessTokens deletes only expired tokens', () async {
+    await Auth().createAccessToken(
+      alice,
+      expiresIn: const Duration(minutes: -1),
+    );
+    AccessToken live = await Auth().createAccessToken(
+      alice,
+      expiresIn: const Duration(days: 365 * 20),
+    );
+    AccessToken forever = await Auth().createAccessToken(alice);
+    expect(await Auth().pruneExpiredAccessTokens(), 1);
+    expect(
+      <int>[for (AccessToken t in await Auth().accessTokens(alice)) t.id],
+      <int>[forever.id, live.id],
+    );
+  });
+
+  test('Auth uses the verifyToken of a driver subclass', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    Auth auth = await verify(token.value, guard: 'closed');
+    expect(auth.isLoggedIn(), isFalse);
+    expect(auth.currentAccessToken, isNull);
+    expect(auth.tokenCan('anything'), isFalse);
+  });
+
+  test('revokeToken on the Auth of the request uses its token', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    Auth auth = await verify(token.value);
+    // no header now: the token from verifyToken is used
+    await auth.revokeToken(FakeRequest());
+    expect((await verify(token.value)).isLoggedIn(), isFalse);
+  });
+
+  test(
+    'a failed last_used_at write does not log the user out',
+    skip: connection == 'sqlite' ? null : 'needs a SQLite trigger',
+    () async {
+      DBDriver db = SqlQueryBuilder().getDBDriver(connection);
+      await db.execute(
+        'CREATE TRIGGER no_update BEFORE UPDATE ON $table '
+        "BEGIN SELECT RAISE(ABORT, 'read only'); END",
+      );
+      addTearDown(() => db.execute('DROP TRIGGER no_update'));
+      AccessToken token = await Auth().createAccessToken(alice);
+      Auth auth = await verify(token.value);
+      expect(auth.isLoggedIn(), isTrue);
+      expect((await Auth().accessTokens(alice)).single.lastUsedAt, isNull);
+    },
+  );
 
   test('a revoked token fails', () async {
     AccessToken one = await Auth().createAccessToken(alice);
