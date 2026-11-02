@@ -1362,6 +1362,25 @@ void main() {
       expect(req.auth, isNull);
     });
 
+    test('an expired token goes on as a guest', () async {
+      String expired = JWT(
+        <String, dynamic>{...claims, 'id': 1},
+        audience: Audience.one('web'),
+      ).sign(signingKey, expiresIn: Duration(seconds: -10));
+      FakeRequest req = bearer(expired);
+      expect(await AuthMiddleware(optional: true).handle(req), same(req));
+      expect(req.auth, isNull);
+    });
+
+    test('redirectTo is not used: a guest goes on', () async {
+      FakeRequest req = FakeRequest();
+      expect(
+        await AuthMiddleware(optional: true, redirectTo: '/login').handle(req),
+        same(req),
+      );
+      expect(req.auth, isNull);
+    });
+
     test('a good token sets req.auth', () async {
       String token = Auth().login(users[1]!)!;
       FakeRequest req = bearer(token);
@@ -1434,11 +1453,16 @@ void main() {
       Dox().config = AppConfig(appKey: secret, exceptionHandler: handler);
     });
 
-    test('two Authorization headers: no user, error reported', () async {
+    test('two Authorization headers: no user, nothing reported', () async {
       Auth auth = Auth();
       await auth.verifyToken(TwoHeaderRequest());
       expect(auth.isLoggedIn(), isFalse);
-      expect(handler.errors.single, isA<HttpException>());
+      expect(JwtAuthDriver.bearerToken(TwoHeaderRequest()), isNull);
+      await expectLater(
+        () => AuthMiddleware().handle(TwoHeaderRequest()),
+        throwsA(isA<UnAuthorizedException>()),
+      );
+      expect(handler.errors, isEmpty);
     });
 
     test(

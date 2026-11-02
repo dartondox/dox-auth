@@ -32,10 +32,17 @@ class TokensTableCommand extends Command {
   @override
   Future<void> run(List<String> args) async {
     List<String> options = <String>[];
+    Set<String> seen = <String>{};
     bool uuid = false;
     bool stringIds = false;
     String? usersTable;
+    String? usersKey;
     for (String arg in args) {
+      String flag = arg.split('=').first;
+      if (!seen.add(flag)) {
+        _fail('$flag is given more than once.');
+        return;
+      }
       if (arg == '--uuid') {
         uuid = true;
       } else if (arg == '--string-ids') {
@@ -43,15 +50,19 @@ class TokensTableCommand extends Command {
       } else if (arg.startsWith('--users-table=')) {
         usersTable = _name(arg, '--users-table=');
         if (usersTable == null) return;
-        options.add("usersTable: '$usersTable'");
       } else if (arg.startsWith('--users-key=')) {
-        String? key = _name(arg, '--users-key=');
-        if (key == null) return;
-        options.add("usersKey: '$key'");
+        usersKey = _name(arg, '--users-key=');
+        if (usersKey == null) return;
       } else {
         _fail('Unknown option "$arg". Usage: dox $usage');
         return;
       }
+    }
+    if (usersTable != null) {
+      options.add("usersTable: '$usersTable'");
+      if (usersKey != null) options.add("usersKey: '$usersKey'");
+    } else if (usersKey != null) {
+      print('Warning: --users-key does nothing without --users-table.');
     }
     if (uuid && stringIds) {
       _fail('Use --uuid or --string-ids, not both.');

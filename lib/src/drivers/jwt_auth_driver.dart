@@ -1,5 +1,6 @@
 // ignore_for_file: depend_on_referenced_packages
 import 'dart:convert';
+import 'dart:io' show HttpException;
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -173,24 +174,23 @@ class JwtAuthDriver extends AuthDriver {
   /// The token in the `Authorization` header of [req], or null.
   /// The `Bearer ` prefix is matched in any case (`bearer`, `BEARER`).
   /// A header with no prefix is used as it is, like in 3.0.2.
+  /// Two `Authorization` headers give null (a normal 401). Anyone can
+  /// send them, so it is not reported as an error.
   static String? bearerToken(IDoxRequest req) {
-    return req.header('Authorization')?.replaceFirst(_bearerPrefix, '');
+    String? header;
+    try {
+      header = req.header('Authorization');
+    } on HttpException {
+      return null;
+    }
+    return header?.replaceFirst(_bearerPrefix, '');
   }
 
   /// verify token and get model from provider
   /// and get user data
   @override
   Future<Model<dynamic>?> verifyToken(IDoxRequest req, String guard) async {
-    String? token;
-    try {
-      token = bearerToken(req);
-    } catch (error, stackTrace) {
-      /// eg. two `Authorization` headers. A 401, like in 3.0.2, but the
-      /// error is reported.
-      AuthDriver.reportError(error, stackTrace);
-      return null;
-    }
-    return userFromToken(token, guard);
+    return userFromToken(bearerToken(req), guard);
   }
 
   /// The user of [token], or null. Same checks as [verifyToken], with no

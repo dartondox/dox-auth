@@ -3,7 +3,7 @@
 No breaking change. Apps on 3.0.2 work the same with no code change, and no user is logged out. The new, safer features are opt-in.
 
 - New `Auth().id()`: the primary key of the logged-in user, or null for a guest. It works when the key is hidden from `toJson()`. New `Auth().guest()`: true when nobody is logged in.
-- New `AuthMiddleware(optional: true)`: a good login sets `req.auth`, and guests go through too, so `req.can()` works on a public page. A bad or expired token is a guest. A database error is a guest too, but it is reported. The default (`optional: false`) does not change.
+- New `AuthMiddleware(optional: true)`: a good login sets `req.auth`, and guests go through too, so `req.can()` works on a public page. A bad, expired or revoked token is a guest. With the JWT and access token drivers, a database error is a guest too, but it is reported. With the session driver, a database error gives a 500. `redirectTo` is not used with `optional: true`. The default (`optional: false`) does not change.
 - New `GuestMiddleware(guard:, redirectTo:)`: lets only guests through, for login and register pages, like the Laravel `guest` middleware. A logged-in user goes to `redirectTo`, or gets a 403 (`already_logged_in`).
 - New, opt-in: access tokens, like AdonisJS access tokens or Laravel Sanctum. Session and JWT guards do not change.
   - New `AccessTokenAuthDriver`. A token looks like `oat_<id>.<secret>`. The table keeps only a SHA-256 hash of the secret, checked in constant time. The plain token is shown once.
@@ -20,6 +20,7 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
   - A token `name` over 255 characters throws an `ArgumentError`, before anything is written.
   - A failed `last_used_at` write is reported, and the request goes on.
 - New: `dox auth:tokens-table` writes a migration for the access tokens table in `db/migration`. It calls `AccessTokenTables.up` and `AccessTokenTables.down`. Flags: `--uuid`, `--string-ids`, `--users-table=<table>` and `--users-key=<column>`. It does not overwrite: when a `create_access_tokens_table` migration is already there, it prints so and exits with code 1. It is a package command (`dox: commands:` in pubspec.yaml), so it needs a `dox` CLI that finds package commands.
+- Fix: `dox auth:tokens-table` with the same flag twice wrote a broken migration and exited with code 0. Now it prints an error, writes nothing and exits with code 1. `--users-key` without `--users-table` now prints a warning (it does nothing alone).
 - Needs dox_core with `package:dox_core/command.dart`.
 - New `AuthDriver.reportError(error, stackTrace)`: the JWT driver now uses it to report errors.
 - New dependency: `crypto`.
@@ -40,6 +41,8 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
 - `Auth().logout(req)` is not changed: it is the session logout, like in 3.0.2.
 - Fix: the `Bearer` prefix of the `Authorization` header is matched in any case, so `bearer xyz` works. New `JwtAuthDriver.bearerToken(req)` reads the token.
 - Fix: JWT `verifyToken` no longer hides unexpected errors. A database outage or a bad config still gives no user (a 401), like in 3.0.2, but the error now goes to `AppConfig.exceptionHandler.report` (or stderr before Dox is set up), so you can see it. A bad, changed or expired token is still quiet.
+- Fix: `Auth().revokeToken(req)` after `userFromToken` on the same `Auth` revoked the token of `userFromToken`, not the token of the request. It now revokes the token of the request.
+- Fix: a request with two `Authorization` headers is a normal 401 for the JWT and access token drivers. It is no longer reported as an error, so it does not fill the error tracker. `JwtAuthDriver.bearerToken(req)` gives null for it.
 - Security, opt-in: login throttle. `Auth.throttle = LoginThrottle(maxAttempts: 5, decay: Duration(minutes: 1))` limits failed `attempt` and `attemptSession` logins per login field and ip, with the app cache. Too many tries throw `LoginThrottledException` (429). `attemptSession` also sends `Retry-After`. Off by default, so nothing changes. New optional `Auth(ip: req.ip())` gives the ip to `attempt`.
 - New: `Auth.needsRehash(hash)` is true when a password hash was not made with the cost of `Hash.rounds` (or `rounds:`). `Auth.hashCost(hash)` reads the cost of a hash. The default cost stays 10. The README shows how to raise it and hash old passwords again on login.
 - `AuthDriver.createToken` gets `user.toJson()`, like in 3.0.2. When the primary key is hidden, the id is added as `sub`.

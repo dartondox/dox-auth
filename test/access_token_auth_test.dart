@@ -9,7 +9,15 @@ import 'package:dox_orm/dox_orm.dart';
 import 'package:test/test.dart';
 
 import 'jwt_auth_test.dart'
-    show FakeAdmin, FakeRequest, FakeUser, admins, bearer, secret, users;
+    show
+        FakeAdmin,
+        FakeRequest,
+        FakeUser,
+        RecordingExceptionHandler,
+        admins,
+        bearer,
+        secret,
+        users;
 
 /// SQLite always runs. Postgres and MySQL run when `PG_PORT` and
 /// `MYSQL_PORT` are set (see .github/workflows/ci.yaml).
@@ -457,12 +465,15 @@ void tests(String connection) {
   });
 
   test('two Authorization headers give no user, not an error', () async {
+    RecordingExceptionHandler handler = RecordingExceptionHandler();
+    Dox().config = AppConfig(appKey: secret, exceptionHandler: handler);
     AccessToken token = await Auth().createAccessToken(alice);
     Auth auth = Auth();
     await auth.verifyToken(TwoHeaderRequest());
     expect(auth.isLoggedIn(), isFalse);
     await Auth().revokeToken(TwoHeaderRequest());
     expect((await verify(token.value)).isLoggedIn(), isTrue);
+    expect(handler.errors, isEmpty);
   });
 
   test('userFromToken checks an access token with no request', () async {
@@ -489,6 +500,19 @@ void tests(String connection) {
     await Auth().revokeAccessToken(alice, token.id);
     expect(await Auth().userFromToken<FakeUser>(token.value), isNull);
   });
+
+  test(
+    'revokeToken after userFromToken revokes the token of the request',
+    () async {
+      AccessToken first = await Auth().createAccessToken(alice);
+      AccessToken second = await Auth().createAccessToken(alice);
+      Auth auth = Auth();
+      await auth.userFromToken<FakeUser>(first.value);
+      await auth.revokeToken(bearer(second.value));
+      expect((await verify(first.value)).isLoggedIn(), isTrue);
+      expect((await verify(second.value)).isLoggedIn(), isFalse);
+    },
+  );
 
   test('a user id of the wrong type is an error', () async {
     expect(
@@ -609,6 +633,14 @@ void tests(String connection) {
     expect((await verify(one.value)).isLoggedIn(), isFalse);
     expect((await verify(two.value)).isLoggedIn(), isTrue);
     expect(await Auth().revokeAccessToken(alice, one.id), isFalse);
+  });
+
+  test('optional AuthMiddleware: a revoked token goes on as a guest', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    await Auth().revokeAccessToken(alice, token.id);
+    FakeRequest req = bearer(token.value);
+    expect(await AuthMiddleware(optional: true).handle(req), same(req));
+    expect(req.auth, isNull);
   });
 
   test('revokeAllAccessTokens stops all tokens of the user only', () async {

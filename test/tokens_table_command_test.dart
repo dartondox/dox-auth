@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dox_auth/commands.dart';
@@ -58,6 +59,8 @@ void main() {
       <String>['--nope'],
       <String>['--users-table=users; drop'],
       <String>['--uuid', '--string-ids'],
+      <String>['--uuid', '--uuid'],
+      <String>['--users-table=users', '--users-table=admins'],
     ]) {
       exitCode = 0;
       await TokensTableCommand(migrations: MigrationFile(folder: folder))
@@ -65,5 +68,35 @@ void main() {
       expect(exitCode, 1, reason: '$args');
       expect(files(), isEmpty, reason: '$args');
     }
+  });
+
+  test('--string-ids alone', () async {
+    await TokensTableCommand(migrations: MigrationFile(folder: folder))
+        .run(<String>['--string-ids']);
+    expect(exitCode, 0);
+    expect(
+      files().first.readAsStringSync(),
+      contains('AccessTokenTables.up(schema, stringIds: true);'),
+    );
+  });
+
+  test('--users-key without --users-table warns', () async {
+    List<String> lines = <String>[];
+    await runZoned(
+      () =>
+          TokensTableCommand(migrations: MigrationFile(folder: folder))
+              .run(<String>['--users-key=uid']),
+      zoneSpecification: ZoneSpecification(
+        print: (Zone self, ZoneDelegate parent, Zone zone, String line) {
+          lines.add(line);
+        },
+      ),
+    );
+    expect(exitCode, 0);
+    expect(lines, contains(contains('--users-key does nothing')));
+    expect(
+      files().first.readAsStringSync(),
+      contains('AccessTokenTables.up(schema);'),
+    );
   });
 }
