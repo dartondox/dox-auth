@@ -19,8 +19,7 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
   - Two `Authorization` headers give no user (401), not an error.
   - A token `name` over 255 characters throws an `ArgumentError`, before anything is written.
   - A failed `last_used_at` write is reported, and the request goes on.
-- New: `dox auth:tokens-table` writes a migration for the access tokens table in `db/migration`. It calls `AccessTokenTables.up` and `AccessTokenTables.down`. Flags: `--uuid`, `--string-ids`, `--users-table=<table>` and `--users-key=<column>`. It does not overwrite: when a `create_access_tokens_table` migration is already there, it prints so and exits with code 1. It is a package command (`dox: commands:` in pubspec.yaml), so it needs a `dox` CLI that finds package commands.
-- Fix: `dox auth:tokens-table` with the same flag twice wrote a broken migration and exited with code 0. Now it prints an error, writes nothing and exits with code 1. `--users-key` without `--users-table` now prints a warning (it does nothing alone).
+- New: `dox auth:tokens-table` writes a migration for the access tokens table in `db/migration`. It calls `AccessTokenTables.up` and `AccessTokenTables.down`. Flags: `--uuid`, `--string-ids`, `--users-table=<table>` and `--users-key=<column>`. It does not overwrite: when a `create_access_tokens_table` migration is already there, it prints so and exits with code 1. It is a package command (`dox: commands:` in pubspec.yaml), so it needs a `dox` CLI that finds package commands. The same flag twice is an error: it writes nothing and exits with code 1. `--users-key` without `--users-table` prints a warning (it does nothing alone).
 - Needs dox_core with `package:dox_core/command.dart`.
 - New `AuthDriver.reportError(error, stackTrace)`: the JWT driver now uses it to report errors.
 - New dependency: `crypto`.
@@ -29,7 +28,7 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
 - The user id comes from the primary key, like in 3.0.2. Only a small token (a `jti` and no primary key) reads `sub`. A user column named `sub` (eg. from an OAuth login) is never taken as the id.
 - Tokens made before this version (no `jti`) work exactly like in 3.0.2.
 - Security, opt-in: JWT revocation with `JwtAuthDriver(revocation: true)`. Off by default: then `verifyToken` does no cache read, like in 3.0.2.
-  - New `Auth().revokeToken(req)`: a JWT logout. It revokes the bearer token of the request until it expires.
+  - New `Auth().revokeToken(req)`: a JWT logout. It revokes the bearer token of the request until it expires, also after `userFromToken` on the same `Auth`.
   - New `Auth().revokeAllTokens(id)`: all tokens of the user made before now stop working (eg. after a password change or a ban). An old token with an `iat` claim is stopped too (tokens from `JwtAuthDriver` have one). An old token with no `iat` works until it expires.
   - New `Auth().forgetUser(id)`: drops the user from the `userCacheTtl` cache on all isolates and servers that share the cache.
   - With revocation off, these three methods throw a `StateError`, so no one thinks a token is revoked when it is not.
@@ -41,7 +40,6 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
 - `Auth().logout(req)` is not changed: it is the session logout, like in 3.0.2.
 - Fix: the `Bearer` prefix of the `Authorization` header is matched in any case, so `bearer xyz` works. New `JwtAuthDriver.bearerToken(req)` reads the token.
 - Fix: JWT `verifyToken` no longer hides unexpected errors. A database outage or a bad config still gives no user (a 401), like in 3.0.2, but the error now goes to `AppConfig.exceptionHandler.report` (or stderr before Dox is set up), so you can see it. A bad, changed or expired token is still quiet.
-- Fix: `Auth().revokeToken(req)` after `userFromToken` on the same `Auth` revoked the token of `userFromToken`, not the token of the request. It now revokes the token of the request.
 - Fix: a request with two `Authorization` headers is a normal 401 for the JWT and access token drivers. It is no longer reported as an error, so it does not fill the error tracker. `JwtAuthDriver.bearerToken(req)` gives null for it.
 - Security, opt-in: login throttle. `Auth.throttle = LoginThrottle(maxAttempts: 5, decay: Duration(minutes: 1))` limits failed `attempt` and `attemptSession` logins per login field and ip, with the app cache. Too many tries throw `LoginThrottledException` (429). `attemptSession` also sends `Retry-After`. Off by default, so nothing changes. New optional `Auth(ip: req.ip())` gives the ip to `attempt`.
 - New: `Auth.needsRehash(hash)` is true when a password hash was not made with the cost of `Hash.rounds` (or `rounds:`). `Auth.hashCost(hash)` reads the cost of a hash. The default cost stays 10. The README shows how to raise it and hash old passwords again on login.
