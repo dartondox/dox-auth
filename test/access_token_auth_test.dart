@@ -635,6 +635,14 @@ void tests(String connection) {
     expect(await Auth().revokeAccessToken(alice, one.id), isFalse);
   });
 
+  test('optional AuthMiddleware: a revoked token goes on as a guest', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    await Auth().revokeAccessToken(alice, token.id);
+    FakeRequest req = bearer(token.value);
+    expect(await AuthMiddleware(optional: true).handle(req), same(req));
+    expect(req.auth, isNull);
+  });
+
   test('revokeAllAccessTokens stops all tokens of the user only', () async {
     AccessToken a1 = await Auth().createAccessToken(alice);
     AccessToken a2 = await Auth().createAccessToken(alice);

@@ -58,7 +58,7 @@ Route.get('/auth/user', <dynamic>[AuthMiddleware(), authController.user]);
 
 After `AuthMiddleware`, `req.auth?.user<User>()` is the logged in user.
 
-`Auth` also has `id()` (the primary key of the user, or null) and `guest()` (true when nobody is logged in). `req.auth` is an `IAuth`, so cast it first: `(req.auth as Auth?)?.id()`.
+`Auth` also has `id()` (the primary key of the user, or null) and `guest()` (true when nobody is logged in). `req.auth?.id()` works with no cast. For a guest, `req.auth` is null.
 
 ### Change APP_KEY
 
@@ -75,7 +75,7 @@ Auth().logout(req);
 Route.get('/dashboard', <dynamic>[AuthMiddleware(redirectTo: '/login'), pageController.dashboard]);
 ```
 
-A public page can still know the user. `AuthMiddleware(optional: true)` sets `req.auth` when the login is good, and lets guests through. Then `req.can()` works on that page. A guest, or a bad or expired token, goes on with `req.auth` null. A database error also goes on as a guest, and it is reported.
+A public page can still know the user. `AuthMiddleware(optional: true)` sets `req.auth` when the login is good, and lets guests through. Then `req.can()` works on that page. A guest, or a bad, expired or revoked token, goes on with `req.auth` null. With the JWT and access token drivers, a database error also goes on as a guest, and it is reported. With the session driver, a database error gives a 500. With `optional: true`, `redirectTo` is not used.
 
 Login and register pages are for guests only. `GuestMiddleware` sends a logged-in user to `redirectTo`, or answers `403` when there is no `redirectTo`:
 

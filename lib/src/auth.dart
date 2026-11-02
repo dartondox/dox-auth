@@ -192,7 +192,7 @@ class Auth implements IAuth {
   /// The primary key of the logged-in user, or null for a guest. It is
   /// read even when the key is hidden from `toJson()`.
   /// ```
-  /// if (post.userId != (req.auth as Auth?)?.id()) abort(403);
+  /// if (post.userId != req.auth?.id()) abort(403);
   /// ```
   dynamic id() {
     Model<dynamic>? user = _userData;
