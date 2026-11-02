@@ -49,6 +49,10 @@ const String table = 'test_access_tokens';
 /// `stringIds: true`
 const String textTable = 'test_access_tokens_text';
 
+/// `uuidIds:` with a foreign key to [uuidUsersTable]
+const String uuidTable = 'test_access_tokens_uuid';
+const String uuidUsersTable = 'test_at_uuid_users';
+
 /// `usersTable:` with a foreign key to [usersTable]
 const String fkTable = 'test_access_tokens_fk';
 const String usersTable = 'test_at_users';
@@ -88,7 +92,13 @@ class TextUser extends Model<TextUser> {
   @override
   Future<TextUser?> find(dynamic arg1, [dynamic arg2]) async {
     lastFindType = arg1.runtimeType;
-    return arg1 is String ? textUsers[arg1] : null;
+    if (arg1 is! String) return null;
+
+    /// like MySQL: an exact match first, else any case
+    return textUsers[arg1] ??
+        textUsers.values
+            .where((TextUser u) => u.id!.toLowerCase() == arg1.toLowerCase())
+            .firstOrNull;
   }
 }
 
@@ -125,6 +135,14 @@ void useConnection(String connection) {
         'text': AuthGuard(
           driver: AccessTokenAuthDriver(
             table: textTable,
+            connection: connection,
+            stringIds: true,
+          ),
+          provider: AuthProvider(model: () => TextUser()),
+        ),
+        'uuid': AuthGuard(
+          driver: AccessTokenAuthDriver(
+            table: uuidTable,
             connection: connection,
             stringIds: true,
           ),
@@ -188,6 +206,15 @@ void tests(String connection) {
     await schema.dropIfExists(usersTable);
     await schema.create(usersTable, (Table t) => t.id());
     await AccessTokenTables.up(schema, table: fkTable, usersTable: usersTable);
+    await AccessTokenTables.down(schema, table: uuidTable);
+    await schema.dropIfExists(uuidUsersTable);
+    await schema.create(uuidUsersTable, (Table t) => t.uuid('id').primary());
+    await AccessTokenTables.up(
+      schema,
+      table: uuidTable,
+      uuidIds: true,
+      usersTable: uuidUsersTable,
+    );
   });
 
   setUp(() async {
@@ -344,6 +371,57 @@ void tests(String connection) {
     expect(await Auth(guard: 'text').revokeAllAccessTokens(upper), 0);
     Auth auth = await verify(token.value, guard: 'text');
     expect(auth.user<TextUser>()?.id, 'abc');
+  });
+
+  test(
+    'a token of a deleted text id does not log in as another case',
+    () async {
+      TextUser lower = textUsers['abc'] = TextUser('abc');
+      AccessToken token = await Auth(guard: 'text').createAccessToken(lower);
+      textUsers.remove('abc');
+      textUsers['ABC'] = TextUser('ABC');
+      expect((await verify(token.value, guard: 'text')).isLoggedIn(), isFalse);
+    },
+  );
+
+  test('uuidIds: a uuid column with a foreign key to uuid users', () async {
+    DBDriver db = SqlQueryBuilder().getDBDriver(connection);
+    const String id = '0b6f3c2e-6a52-4c4e-9d3a-6f1c1e0a7b11';
+    await db.execute('DELETE FROM $uuidTable');
+    await db.execute('DELETE FROM $uuidUsersTable');
+    await db.execute("INSERT INTO $uuidUsersTable (id) VALUES ('$id')");
+    TextUser user = textUsers[id] = TextUser(id);
+    AccessToken token = await Auth(guard: 'uuid').createAccessToken(user);
+    expect(token.tokenableId, id);
+    expect((await verify(token.value, guard: 'uuid')).user<TextUser>()?.id, id);
+    expect(await Auth(guard: 'uuid').accessTokens(user), hasLength(1));
+    await db.execute("DELETE FROM $uuidUsersTable WHERE id = '$id'");
+    expect(await count(connection, 'SELECT COUNT(*) AS c FROM $uuidTable'), 0);
+  });
+
+  test('userFromToken checks an access token with no request', () async {
+    AccessToken token = await Auth().createAccessToken(
+      alice,
+      abilities: <String>['chat'],
+    );
+    Auth auth = Auth();
+    expect((await auth.userFromToken<FakeUser>(token.value))?.id, 1);
+    expect(auth.currentAccessToken?.id, token.id);
+    expect(auth.tokenCan('chat'), isTrue);
+    expect(auth.tokenCan('admin'), isFalse);
+
+    expect(await Auth().userFromToken<FakeUser>(null), isNull);
+    expect(
+      await Auth().userFromToken<FakeUser>('Bearer ${token.value}'),
+      isNull,
+    );
+    expect(await Auth().userFromToken<FakeUser>('${token.value}x'), isNull);
+    expect(
+      await Auth(guard: 'api2').userFromToken<FakeUser>(token.value),
+      isNull,
+    );
+    await Auth().revokeAccessToken(alice, token.id);
+    expect(await Auth().userFromToken<FakeUser>(token.value), isNull);
   });
 
   test('a user id of the wrong type is an error', () async {

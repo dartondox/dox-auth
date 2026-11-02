@@ -10,7 +10,8 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
   - New `Auth().createAccessToken(user, name:, abilities:, expiresIn:)`, `accessTokens(user)`, `revokeAccessToken(user, id)`, `revokeAllAccessTokens(user)`, `pruneExpiredAccessTokens()`, `tokenCan(ability)` and `currentAccessToken`.
   - `Auth().attempt(credentials)` gives an access token with this driver. `Auth().revokeToken(req)` revokes the access token of the request.
   - A bad, wrong, expired or revoked token gives no user (401). A database error does too, and it is reported.
-  - New `AccessTokenAuthDriver.check(token, guard)` checks a token without a request.
+  - `Auth().userFromToken(token)` also checks an access token, for code with no request (like Socket.IO). Then `currentAccessToken` and `tokenCan` work. The driver method is `check(token, guard)` (an instance method).
+  - `AccessTokenTables.up(schema, uuidIds: true)` makes `tokenable_id` a uuid column, so a foreign key to uuid users works on Postgres.
   - A failed `last_used_at` write is reported, and the request goes on.
 - New `AuthDriver.reportError(error, stackTrace)`: the JWT driver now uses it to report errors.
 - New dependency: `crypto`.

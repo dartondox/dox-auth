@@ -187,7 +187,7 @@ class JwtAuthDriver extends AuthDriver {
     } catch (error, stackTrace) {
       /// eg. two `Authorization` headers. A 401, like in 3.0.2, but the
       /// error is reported.
-      _reportError(error, stackTrace);
+      AuthDriver.reportError(error, stackTrace);
       return null;
     }
     return userFromToken(token, guard);

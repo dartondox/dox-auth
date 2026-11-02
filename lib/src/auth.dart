@@ -143,14 +143,22 @@ class Auth implements IAuth {
     return _accessTokenDriver.revokeAll(user, _guard);
   }
 
-  /// The user of [token] (a JWT), or null. For code with no request,
-  /// like a socket. Same checks as a request with a `Bearer` header: a
-  /// null, bad, expired, revoked or changed token gives null. Needs a
-  /// guard with `JwtAuthDriver`.
+  /// The user of [token] (a JWT or an access token), or null. For code
+  /// with no request, like a socket. Same checks as a request with a
+  /// `Bearer` header: a null, bad, expired, revoked or changed token
+  /// gives null. Needs a guard with `JwtAuthDriver` or
+  /// `AccessTokenAuthDriver`. With an access token, [currentAccessToken]
+  /// and [tokenCan] work after it.
   /// ```
   /// User? user = await Auth(guard: 'api').userFromToken(handshake.token);
   /// ```
   Future<T?> userFromToken<T>(String? token) async {
+    AuthDriver driver = _driver;
+    if (driver is AccessTokenAuthDriver) {
+      _accessToken = token == null ? null : await driver.check(token, _guard);
+      _userData = _accessToken?.user;
+      return _userData as T?;
+    }
     _userData = await _jwtDriver.userFromToken(token, _guard);
     return _userData as T?;
   }

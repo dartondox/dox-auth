@@ -161,7 +161,8 @@ class CreateAccessTokensTable extends Migration {
 Then run `dox migrate`. Options of `AccessTokenTables.up`:
 
 - `table: 'tokens'`: when the driver uses another table (`AccessTokenAuthDriver(table: 'tokens')`), pass the same name.
-- `stringIds: true`: for users with text ids, like a uuid. Set `AccessTokenAuthDriver(stringIds: true)` too. By default `tokenable_id` is an unsigned big int, like Sanctum and AdonisJS.
+- `stringIds: true`: for users with text ids. Set `AccessTokenAuthDriver(stringIds: true)` too. By default `tokenable_id` is an unsigned big int, like Sanctum and AdonisJS.
+- `uuidIds: true`: for users with uuid ids. `tokenable_id` is then a uuid column (`UUID` on Postgres), so `usersTable:` works with a uuid id. Set `AccessTokenAuthDriver(stringIds: true)` on the driver.
 - `usersTable: 'users'`: adds a foreign key from `tokenable_id` to `users.id`, with cascade delete. Then the tokens of a deleted user are deleted too. The two id columns must have the same type.
 
 The migration makes the table on the default connection. If the driver uses another connection (`AccessTokenAuthDriver(connection: 'other')`), make the table on that connection.
@@ -256,11 +257,11 @@ if (Auth.needsRehash(user.password)) {
 For code with no request, like a Socket.IO login:
 
 ```dart
-User? user = await Auth(guard: 'api').userFromToken(token);   // a JWT, no `Bearer ` prefix
+User? user = await Auth(guard: 'api').userFromToken(token);   // a JWT or an access token, no `Bearer ` prefix
 User? user = await Auth(guard: 'web').userFromSession(session); // from SessionMiddleware().fromCookie(value)
 ```
 
-`userFromToken` runs the same checks as a request with a `Bearer` header. A missing, bad, expired, revoked or changed token gives `null`. `userCacheTtl` is a cache, not a check: with it on, a deleted or banned user can still connect until the cache time ends, unless `forgetUser` runs.
+`userFromToken` runs the same checks as a request with a `Bearer` header. With `AccessTokenAuthDriver`, `currentAccessToken` and `tokenCan` work after it. A missing, bad, expired, revoked or changed token gives `null`. `userCacheTtl` is a cache, not a check: with it on, a deleted or banned user can still connect until the cache time ends, unless `forgetUser` runs.
 
 ## Custom guard (API key)
 

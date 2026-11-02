@@ -120,6 +120,9 @@ class AccessTokenAuthDriver extends AuthDriver {
       Model<dynamic> model = AuthEngine().guard(guard).provider.model();
       Model<dynamic>? user = await model.find(found.tokenableId);
       if (user == null) return null;
+
+      /// exact id: MySQL may find 'ABC' for 'abc'
+      if (_idOf(user) != found.tokenableId) return null;
       found.user = user;
 
       DateTime? lastUsed = found.lastUsedAt;
@@ -372,6 +375,9 @@ class AccessToken {
 /// - `table:`: the driver uses another table name.
 /// - `stringIds: true`: the users have text ids. Set it on the driver
 ///   too. `tokenable_id` is then text, else an unsigned big int.
+/// - `uuidIds: true`: the users have uuid ids. `tokenable_id` is then a
+///   uuid column (UUID on Postgres), so a foreign key to a uuid id
+///   works. Set `stringIds: true` on the driver.
 /// - `usersTable:`: adds a foreign key from `tokenable_id` to `id` of
 ///   this table, with cascade delete. So the tokens of a deleted user
 ///   are deleted too. The id columns must have the same type.
@@ -384,12 +390,15 @@ class AccessTokenTables {
     Schema schema, {
     String table = defaultTable,
     bool stringIds = false,
+    bool uuidIds = false,
     String? usersTable,
   }) async {
     await schema.create(table, (Table t) {
       t.id();
       t.string('tokenable_type');
-      if (stringIds) {
+      if (uuidIds) {
+        t.uuid('tokenable_id');
+      } else if (stringIds) {
         t.string('tokenable_id');
       } else {
         t.unsignedBigInteger('tokenable_id');
