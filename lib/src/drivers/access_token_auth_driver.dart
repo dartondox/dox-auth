@@ -65,6 +65,9 @@ class AccessTokenAuthDriver extends AuthDriver {
     AuthDriver.prepareDummyHash(hashRounds);
   }
 
+  /// The longest token `name` (the column is VARCHAR(255)).
+  static const int maxNameLength = 255;
+
   /// Every token starts with this.
   static const String prefix = 'oat_';
 
@@ -169,6 +172,13 @@ class AccessTokenAuthDriver extends AuthDriver {
     String secret = base64Url
         .encode(List<int>.generate(32, (_) => _random.nextInt(256)))
         .replaceAll('=', '');
+    if (name != null && name.length > maxNameLength) {
+      throw ArgumentError.value(
+        name,
+        'name',
+        'is longer than $maxNameLength characters',
+      );
+    }
     DateTime now = DateTime.now().toUtc();
     Duration? ttl = expiresIn ?? this.expiresIn;
     Map<String, dynamic> row = await _query.insert(<String, dynamic>{
@@ -215,12 +225,28 @@ class AccessTokenAuthDriver extends AuthDriver {
 
   /// Delete all tokens of [user]. Gives how many were deleted.
   Future<int> revokeAll(Model<dynamic> user, String guard) async {
-    List<AccessToken> own = await all(user, guard);
-    if (own.isEmpty) return 0;
-    return _query.whereIn('id', <int>[
-      for (AccessToken t in own) t.id,
-    ]).delete();
+    Object id = _idOf(user, guard);
+    if (!_textIds) {
+      /// an int compare in SQL is exact
+      return _query
+          .where('tokenable_type', _tokenableType(guard))
+          .where('tokenable_id', id)
+          .where('type', _typeOf(guard))
+          .delete();
+    }
+
+    /// text: MySQL may match another case, so check the ids in Dart and
+    /// delete in chunks (a query has at most 65,535 parameters)
+    List<int> ids = <int>[for (AccessToken t in await all(user, guard)) t.id];
+    int deleted = 0;
+    for (int i = 0; i < ids.length; i += _chunk) {
+      List<int> part = ids.sublist(i, min(i + _chunk, ids.length));
+      deleted += await _query.whereIn('id', part).delete();
+    }
+    return deleted;
   }
+
+  static const int _chunk = 1000;
 
   /// Delete the expired tokens of this table (all types). Gives how many
   /// were deleted. Run it from a scheduled job.
@@ -407,10 +433,11 @@ class AccessToken {
 ///   too. `tokenable_id` is then text, else an unsigned big int.
 /// - `uuidIds: true`: the users have uuid ids. `tokenable_id` is then a
 ///   uuid column (UUID on Postgres), so a foreign key to a uuid id
-///   works. Set `stringIds: true` on the driver.
-/// - `usersTable:`: adds a foreign key from `tokenable_id` to `id` of
-///   this table, with cascade delete. So the tokens of a deleted user
-///   are deleted too. The id columns must have the same type.
+///   works. Set `uuidIds: true` on the driver too.
+/// - `usersTable:`: adds a foreign key from `tokenable_id` to
+///   `usersKey` (default `id`) of this table, with cascade delete. So
+///   the tokens of a deleted user are deleted too. The id columns must
+///   have the same type. Use one token table per user model then.
 ///
 /// It runs on the connection of the migration (the default one).
 class AccessTokenTables {
@@ -422,6 +449,7 @@ class AccessTokenTables {
     bool stringIds = false,
     bool uuidIds = false,
     String? usersTable,
+    String usersKey = 'id',
   }) async {
     await schema.create(table, (Table t) {
       t.id();
@@ -443,10 +471,11 @@ class AccessTokenTables {
       t.dateTimeTz('created_at').nullable();
       t.dateTimeTz('updated_at').nullable();
       t.index(<String>['tokenable_type', 'tokenable_id']);
+      t.index('expires_at');
       if (usersTable != null) {
         t
             .foreign('tokenable_id')
-            .references('id')
+            .references(usersKey)
             .on(usersTable)
             .cascadeOnDelete();
       }

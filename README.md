@@ -163,7 +163,7 @@ Then run `dox migrate`. Options of `AccessTokenTables.up`:
 - `table: 'tokens'`: when the driver uses another table (`AccessTokenAuthDriver(table: 'tokens')`), pass the same name.
 - `stringIds: true`: for users with text ids. Set `AccessTokenAuthDriver(stringIds: true)` too. By default `tokenable_id` is an unsigned big int, like Sanctum and AdonisJS.
 - `uuidIds: true`: for users with uuid ids. `tokenable_id` is then a uuid column (`UUID` on Postgres), so `usersTable:` works with a uuid id. Set `AccessTokenAuthDriver(uuidIds: true)` too. A uuid is kept and compared in lower case, like Postgres does, so keep uuids in lower case in the users table.
-- `usersTable: 'users'`: adds a foreign key from `tokenable_id` to `users.id`, with cascade delete. Then the tokens of a deleted user are deleted too. The two id columns must have the same type.
+- `usersTable: 'users'`: adds a foreign key from `tokenable_id` to `users.id`, with cascade delete. Then the tokens of a deleted user are deleted too. The two id columns must have the same type. Use `usersKey: 'uid'` when the key of the users table is not `id`. If you have more than one user model (like users and admins), give each model its own token table, with `table:` on the driver and in the migration. With one shared table, the foreign key fails for admin tokens, and deleting a user also deletes the tokens of the admin with the same id.
 
 The migration makes the table on the default connection. If the driver uses another connection (`AccessTokenAuthDriver(connection: 'other')`), make the table on that connection.
 
@@ -176,7 +176,7 @@ String? token = await Auth(guard: 'api').attempt(credentials);
 // or make one for a user
 AccessToken token = await Auth(guard: 'api').createAccessToken(
   user,
-  name: 'cli',
+  name: 'cli', // at most 255 characters
   abilities: <String>['posts:read'], // default: ['*'] (all)
   expiresIn: const Duration(days: 30), // default: the driver expiresIn
 );

@@ -4,7 +4,7 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
 
 - New, opt-in: access tokens, like AdonisJS access tokens or Laravel Sanctum. Session and JWT guards do not change.
   - New `AccessTokenAuthDriver`. A token looks like `oat_<id>.<secret>`. The table keeps only a SHA-256 hash of the secret, checked in constant time. The plain token is shown once.
-  - New `AccessTokenTables.up(schema)` and `down(schema)` for a migration. The default table is `auth_access_tokens`. `tokenable_id` is an unsigned big int. `stringIds: true` (on the table and the driver) makes it text, for users with text ids (compared exactly). For uuid users, use `uuidIds: true` instead (see below). `usersTable:` adds a foreign key with cascade delete.
+  - New `AccessTokenTables.up(schema)` and `down(schema)` for a migration. The default table is `auth_access_tokens`. `tokenable_id` is an unsigned big int. `stringIds: true` (on the table and the driver) makes it text, for users with text ids (compared exactly). For uuid users, use `uuidIds: true` instead (see below). `usersTable:` adds a foreign key with cascade delete (`usersKey:` for a key that is not `id`). There is an index on `expires_at`.
   - Each token has a `type` (default: the guard name, or `AccessTokenAuthDriver(type: ...)`). A token works only on a guard with the same type.
   - The time columns are `DATETIME` on MySQL, so a token can expire after 2038.
   - New `Auth().createAccessToken(user, name:, abilities:, expiresIn:)`, `accessTokens(user)`, `revokeAccessToken(user, id)`, `revokeAllAccessTokens(user)`, `pruneExpiredAccessTokens()`, `tokenCan(ability)` and `currentAccessToken`.
@@ -14,6 +14,7 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
   - `AccessTokenTables.up(schema, uuidIds: true)` and `AccessTokenAuthDriver(uuidIds: true)`: `tokenable_id` is a uuid column, so a foreign key to uuid users works on Postgres. A uuid is kept and compared in lower case.
   - The user must be a model of the guard. `createAccessToken`, `accessTokens`, `revokeAccessToken` and `revokeAllAccessTokens` throw an `ArgumentError` for a user of another model (eg. an admin on the users guard).
   - Two `Authorization` headers give no user (401), not an error.
+  - A token `name` over 255 characters throws an `ArgumentError`, before anything is written.
   - A failed `last_used_at` write is reported, and the request goes on.
 - New `AuthDriver.reportError(error, stackTrace)`: the JWT driver now uses it to report errors.
 - New dependency: `crypto`.

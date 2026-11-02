@@ -49,6 +49,10 @@ const String table = 'test_access_tokens';
 /// `stringIds: true`
 const String textTable = 'test_access_tokens_text';
 
+/// `usersKey:` with a foreign key to `uid` of [keyUsersTable]
+const String keyTable = 'test_access_tokens_key';
+const String keyUsersTable = 'test_at_key_users';
+
 /// `uuidIds:` with a foreign key to [uuidUsersTable]
 const String uuidTable = 'test_access_tokens_uuid';
 const String uuidUsersTable = 'test_at_uuid_users';
@@ -156,6 +160,13 @@ void useConnection(String connection) {
           ),
           provider: AuthProvider(model: () => TextUser()),
         ),
+        'key': AuthGuard(
+          driver: AccessTokenAuthDriver(
+            table: keyTable,
+            connection: connection,
+          ),
+          provider: AuthProvider(model: () => FakeUser()),
+        ),
         'fk': AuthGuard(
           driver: AccessTokenAuthDriver(table: fkTable, connection: connection),
           provider: AuthProvider(model: () => FakeUser()),
@@ -214,6 +225,15 @@ void tests(String connection) {
     await schema.dropIfExists(usersTable);
     await schema.create(usersTable, (Table t) => t.id());
     await AccessTokenTables.up(schema, table: fkTable, usersTable: usersTable);
+    await AccessTokenTables.down(schema, table: keyTable);
+    await schema.dropIfExists(keyUsersTable);
+    await schema.create(keyUsersTable, (Table t) => t.id('uid'));
+    await AccessTokenTables.up(
+      schema,
+      table: keyTable,
+      usersTable: keyUsersTable,
+      usersKey: 'uid',
+    );
     await AccessTokenTables.down(schema, table: uuidTable);
     await schema.dropIfExists(uuidUsersTable);
     await schema.create(uuidUsersTable, (Table t) => t.uuid('id').primary());
@@ -488,6 +508,48 @@ void tests(String connection) {
     await db.execute('DELETE FROM $usersTable WHERE id = 1');
     expect(await count(connection, 'SELECT COUNT(*) AS c FROM $fkTable'), 0);
     expect((await verify(token.value, guard: 'fk')).isLoggedIn(), isFalse);
+  });
+
+  test('usersKey: a foreign key to another key name', () async {
+    DBDriver db = SqlQueryBuilder().getDBDriver(connection);
+    await db.execute('DELETE FROM $keyTable');
+    await db.execute('DELETE FROM $keyUsersTable');
+    await db.execute('INSERT INTO $keyUsersTable (uid) VALUES (1)');
+    AccessToken token = await Auth(guard: 'key').createAccessToken(alice);
+    expect((await verify(token.value, guard: 'key')).isLoggedIn(), isTrue);
+    await db.execute('DELETE FROM $keyUsersTable WHERE uid = 1');
+    expect(await count(connection, 'SELECT COUNT(*) AS c FROM $keyTable'), 0);
+  });
+
+  test('a name over 255 characters is an error, not a row', () async {
+    expect(
+      () => Auth().createAccessToken(alice, name: 'x' * 256),
+      throwsArgumentError,
+    );
+    expect(await count(connection, 'SELECT COUNT(*) AS c FROM $table'), 0);
+    AccessToken ok = await Auth().createAccessToken(alice, name: 'x' * 255);
+    expect(ok.name, 'x' * 255);
+  });
+
+  test('revokeAll deletes many tokens, only of the user', () async {
+    for (int i = 0; i < 30; i++) {
+      await Auth().createAccessToken(alice);
+    }
+    AccessToken b1 = await Auth().createAccessToken(bob);
+    expect(await Auth().revokeAllAccessTokens(alice), 30);
+    expect(await Auth().accessTokens(alice), isEmpty);
+    expect((await verify(b1.value)).isLoggedIn(), isTrue);
+    expect(await Auth().revokeAllAccessTokens(alice), 0);
+
+    TextUser user = textUsers['u1'] = TextUser('u1');
+    TextUser upper = textUsers['U1'] = TextUser('U1');
+    for (int i = 0; i < 3; i++) {
+      await Auth(guard: 'text').createAccessToken(user);
+    }
+    AccessToken other = await Auth(guard: 'text').createAccessToken(upper);
+    expect(await Auth(guard: 'text').revokeAllAccessTokens(user), 3);
+    expect(await Auth(guard: 'text').accessTokens(upper), hasLength(1));
+    expect((await verify(other.value, guard: 'text')).isLoggedIn(), isTrue);
   });
 
   test('pruneExpiredAccessTokens deletes only expired tokens', () async {
