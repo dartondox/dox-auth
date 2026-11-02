@@ -31,6 +31,18 @@ class WebRouter extends Router {
       AuthMiddleware(redirectTo: '/login'),
       (DoxRequest req) => 'page',
     ]);
+    Route.get('public', <dynamic>[
+      AuthMiddleware(optional: true),
+      (DoxRequest req) => req.auth?.user<FakeUser>()?.email ?? 'guest',
+    ]);
+    Route.get('login-page', <dynamic>[
+      GuestMiddleware(redirectTo: '/dashboard'),
+      (DoxRequest req) => 'login page',
+    ]);
+    Route.get('register-page', <dynamic>[
+      GuestMiddleware(),
+      (DoxRequest req) => 'register page',
+    ]);
     Route.post('note', (DoxRequest req) {
       req.session.put('note', 'hi');
       return 'ok';
@@ -199,6 +211,30 @@ void main() {
     TestResponse res = await client.get('/page');
     expect(res.status, 302);
     expect(res.header('location'), '/login');
+  });
+
+  test('optional auth lets a guest in and sets the user after login', () async {
+    Browser browser = Browser(client);
+    expect((await browser.get('/public')).body, 'guest');
+    await browser.post('/login', <String, dynamic>{
+      'email': 'a@dox.dev',
+      'password': 'secret',
+    });
+    expect((await browser.get('/public')).body, 'a@dox.dev');
+  });
+
+  test('GuestMiddleware lets a guest in, and stops a user', () async {
+    Browser browser = Browser(client);
+    expect((await browser.get('/login-page')).body, 'login page');
+    expect((await browser.get('/register-page')).body, 'register page');
+    await browser.post('/login', <String, dynamic>{
+      'email': 'a@dox.dev',
+      'password': 'secret',
+    });
+    TestResponse page = await browser.get('/login-page');
+    expect(page.status, 302);
+    expect(page.header('location'), '/dashboard');
+    expect((await browser.get('/register-page')).status, 403);
   });
 
   test(

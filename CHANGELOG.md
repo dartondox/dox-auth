@@ -3,6 +3,8 @@
 No breaking change. Apps on 3.0.2 work the same with no code change, and no user is logged out. The new, safer features are opt-in.
 
 - New `Auth().id()`: the primary key of the logged-in user, or null for a guest. It works when the key is hidden from `toJson()`. New `Auth().guest()`: true when nobody is logged in.
+- New `AuthMiddleware(optional: true)`: a good login sets `req.auth`, and guests go through too, so `req.can()` works on a public page. A bad or expired token is a guest. A database error is a guest too, but it is reported. The default (`optional: false`) does not change.
+- New `GuestMiddleware(guard:, redirectTo:)`: lets only guests through, for login and register pages, like the Laravel `guest` middleware. A logged-in user goes to `redirectTo`, or gets a 403 (`already_logged_in`).
 - New, opt-in: access tokens, like AdonisJS access tokens or Laravel Sanctum. Session and JWT guards do not change.
   - New `AccessTokenAuthDriver`. A token looks like `oat_<id>.<secret>`. The table keeps only a SHA-256 hash of the secret, checked in constant time. The plain token is shown once.
   - New `AccessTokenTables.up(schema)` and `down(schema)` for a migration. The default table is `auth_access_tokens`. `tokenable_id` is an unsigned big int. `stringIds: true` (on the table and the driver) makes it text, for users with text ids (compared exactly). For uuid users, use `uuidIds: true` instead (see below). `usersTable:` adds a foreign key with cascade delete (`usersKey:` for a key that is not `id`). There is an index on `expires_at`.

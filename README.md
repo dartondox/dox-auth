@@ -75,6 +75,15 @@ Auth().logout(req);
 Route.get('/dashboard', <dynamic>[AuthMiddleware(redirectTo: '/login'), pageController.dashboard]);
 ```
 
+A public page can still know the user. `AuthMiddleware(optional: true)` sets `req.auth` when the login is good, and lets guests through. Then `req.can()` works on that page. A guest, or a bad or expired token, goes on with `req.auth` null. A database error also goes on as a guest, and it is reported.
+
+Login and register pages are for guests only. `GuestMiddleware` sends a logged-in user to `redirectTo`, or answers `403` when there is no `redirectTo`:
+
+```dart
+Route.get('/posts', <dynamic>[AuthMiddleware(optional: true), postController.index]);
+Route.get('/login', <dynamic>[GuestMiddleware(redirectTo: '/dashboard'), pageController.login]);
+```
+
 ## Features
 
 - JWT driver (`JwtAuthDriver`) with a secret, algorithm, expiry and issuer.
@@ -83,7 +92,8 @@ Route.get('/dashboard', <dynamic>[AuthMiddleware(redirectTo: '/login'), pageCont
 - `Auth().attempt(credentials)` finds the user and checks the bcrypt hash.
 - `Auth().login(user)` gives a token with no password check.
 - Custom drivers, like an API key guard. `Auth().setUser(req, user)` sets the user from your own middleware.
-- `AuthMiddleware` answers `401` when the user is not logged in. With `redirectTo`, it sends the user to that page instead.
+- `AuthMiddleware` answers `401` when the user is not logged in. With `redirectTo`, it sends the user to that page instead. With `optional: true`, guests go through too.
+- `GuestMiddleware` lets only guests through, for login and register pages.
 - More than one guard, like `web` and `admin`, each with its own driver and user model.
 - The user is loaded from the database on each request with `dox_orm`.
 - Gates and policies for authorization, with the `Can` middleware and `req.can`.
