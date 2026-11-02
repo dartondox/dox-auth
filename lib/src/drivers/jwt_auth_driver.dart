@@ -1,6 +1,5 @@
 // ignore_for_file: depend_on_referenced_packages
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -188,7 +187,7 @@ class JwtAuthDriver extends AuthDriver {
     } catch (error, stackTrace) {
       /// eg. two `Authorization` headers. A 401, like in 3.0.2, but the
       /// error is reported.
-      _reportError(error, stackTrace);
+      AuthDriver.reportError(error, stackTrace);
       return null;
     }
     return userFromToken(token, guard);
@@ -282,21 +281,9 @@ class JwtAuthDriver extends AuthDriver {
       /// Anything else (the database is down, a bad config) is a bug or
       /// an outage. The answer is still a 401, like in 3.0.2, but the
       /// error is reported so it is not hidden.
-      _reportError(error, stackTrace);
+      AuthDriver.reportError(error, stackTrace);
     }
     return null;
-  }
-
-  /// Sends [error] to `AppConfig.exceptionHandler`, so it shows up in
-  /// the log or the error tracker of the app. Before Dox is set up, it
-  /// goes to stderr.
-  static void _reportError(Object error, StackTrace stackTrace) {
-    try {
-      Dox().config.exceptionHandler.report(error, stackTrace);
-    } catch (_) {
-      stderr.writeln('[dox] dox_auth verifyToken failed: $error');
-      stderr.writeln(stackTrace);
-    }
   }
 
   /// The checked payload of [token]. Throws when the token is bad.

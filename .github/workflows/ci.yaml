@@ -10,6 +10,28 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The access token tests run on SQLite, Postgres and MySQL.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 2s --health-retries 30
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_USER: dox
+          MYSQL_PASSWORD: password
+          MYSQL_DATABASE: dox-framework
+          MYSQL_ROOT_PASSWORD: password
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -ppassword"
+          --health-interval 2s --health-retries 30
+    env:
+      PG_PORT: 5432
+      MYSQL_PORT: 3306
     steps:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
