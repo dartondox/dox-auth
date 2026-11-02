@@ -18,3 +18,8 @@ dependencies:
 dev_dependencies:
   lints: ^6.1.0
   test: ^1.33.0
+
+# The `dox` CLI finds the commands of this package here
+# (`dox auth:tokens-table`).
+dox:
+  commands: package:dox_auth/commands.dart

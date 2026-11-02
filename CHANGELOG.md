@@ -16,6 +16,8 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
   - Two `Authorization` headers give no user (401), not an error.
   - A token `name` over 255 characters throws an `ArgumentError`, before anything is written.
   - A failed `last_used_at` write is reported, and the request goes on.
+- New: `dox auth:tokens-table` writes a migration for the access tokens table in `db/migration`. It calls `AccessTokenTables.up` and `AccessTokenTables.down`. Flags: `--uuid`, `--string-ids`, `--users-table=<table>` and `--users-key=<column>`. It does not overwrite: when a `create_access_tokens_table` migration is already there, it prints so and exits with code 1. It is a package command (`dox: commands:` in pubspec.yaml), so it needs a `dox` CLI that finds package commands.
+- Needs dox_core with `package:dox_core/command.dart`.
 - New `AuthDriver.reportError(error, stackTrace)`: the JWT driver now uses it to report errors.
 - New dependency: `crypto`.
 - By default a JWT holds the same data as in 3.0.2: the user (`toJson()`, hidden fields left out), plus `iat`, `exp` and a new `jti`. A front end that reads user fields from the token still works.

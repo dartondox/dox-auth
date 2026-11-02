@@ -414,7 +414,7 @@ class AccessToken {
 }
 
 /// The access token table of [AccessTokenAuthDriver].
-/// Add a migration in `db/migration` that calls it:
+/// `dox auth:tokens-table` writes a migration in `db/migration` that calls it:
 /// ```
 /// class CreateAccessTokensTable extends Migration {
 ///   @override
