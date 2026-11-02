@@ -40,11 +40,18 @@ class AccessTokenAuthDriver extends AuthDriver {
   /// bcrypt cost of the stored password hashes, for `Auth().attempt`.
   final int hashRounds;
 
-  /// true when the users have text ids (like a uuid). Then
-  /// `tokenable_id` is a text column: make the table with
-  /// `AccessTokenTables.up(schema, stringIds: true)`. false (the
+  /// true when the users have text ids. Then `tokenable_id` is a text
+  /// column: make the table with `AccessTokenTables.up(schema,
+  /// stringIds: true)`. Text ids are compared exactly. false (the
   /// default): the users have int ids, like Sanctum and AdonisJS.
   final bool stringIds;
+
+  /// true when the users have uuid ids. Make the table with
+  /// `AccessTokenTables.up(schema, uuidIds: true)`. A uuid is kept and
+  /// compared in lower case, like Postgres does.
+  final bool uuidIds;
+
+  bool get _textIds => stringIds || uuidIds;
 
   AccessTokenAuthDriver({
     this.table = AccessTokenTables.defaultTable,
@@ -53,6 +60,7 @@ class AccessTokenAuthDriver extends AuthDriver {
     this.type,
     this.hashRounds = 10,
     this.stringIds = false,
+    this.uuidIds = false,
   }) {
     AuthDriver.prepareDummyHash(hashRounds);
   }
@@ -88,7 +96,13 @@ class AccessTokenAuthDriver extends AuthDriver {
   /// `Auth` always calls it.
   @override
   Future<Model<dynamic>?> verifyToken(IDoxRequest req, String guard) async {
-    String? token = JwtAuthDriver.bearerToken(req);
+    String? token;
+    try {
+      token = JwtAuthDriver.bearerToken(req);
+    } catch (error, stackTrace) {
+      /// eg. two `Authorization` headers: a 401, like the JWT driver
+      AuthDriver.reportError(error, stackTrace);
+    }
     AccessToken? found = token == null ? null : await check(token, guard);
     _ofRequest[req] = found;
     return found?.user;
@@ -122,7 +136,7 @@ class AccessTokenAuthDriver extends AuthDriver {
       if (user == null) return null;
 
       /// exact id: MySQL may find 'ABC' for 'abc'
-      if (_idOf(user) != found.tokenableId) return null;
+      if (_idOf(user, guard) != found.tokenableId) return null;
       found.user = user;
 
       DateTime? lastUsed = found.lastUsedAt;
@@ -159,7 +173,7 @@ class AccessTokenAuthDriver extends AuthDriver {
     Duration? ttl = expiresIn ?? this.expiresIn;
     Map<String, dynamic> row = await _query.insert(<String, dynamic>{
       'tokenable_type': _tokenableType(guard),
-      'tokenable_id': _idOf(user),
+      'tokenable_id': _idOf(user, guard),
       'type': _typeOf(guard),
       'name': name,
       'hash': _hashOf(secret),
@@ -177,7 +191,7 @@ class AccessTokenAuthDriver extends AuthDriver {
 
   /// All tokens of [user] for [guard], newest first. Expired ones too.
   Future<List<AccessToken>> all(Model<dynamic> user, String guard) async {
-    Object id = _idOf(user);
+    Object id = _idOf(user, guard);
     List<Map<String, dynamic>> rows = await _query
         .where('tokenable_type', _tokenableType(guard))
         .where('tokenable_id', id)
@@ -243,19 +257,30 @@ class AccessTokenAuthDriver extends AuthDriver {
     return AuthEngine().guard(guard).provider.model().tableName;
   }
 
-  /// The id of [user]: an int, or a String with [stringIds].
-  Object _idOf(Model<dynamic> user) {
+  /// The id of [user]: an int, or a String with [stringIds] or
+  /// [uuidIds]. [user] must be a model of the guard, so a token made
+  /// for an admin on the users guard can not log in as a user.
+  Object _idOf(Model<dynamic> user, String guard) {
+    String table = _tokenableType(guard);
+    if (user.tableName != table) {
+      throw ArgumentError(
+        "The user is a '${user.tableName}' model, but the guard '$guard' "
+        "uses '$table'. Use Auth(guard: ...) of its own guard.",
+      );
+    }
     Object? id = user.toMap(original: true)[user.primaryKey];
-    if (stringIds ? id is String : id is int && id >= 0) return id!;
+    if (_textIds ? id is String : id is int && id >= 0) {
+      return uuidIds ? (id as String).toLowerCase() : id!;
+    }
     throw ArgumentError(
-      stringIds
-          ? 'The user id must be a String (stringIds is on).'
+      _textIds
+          ? 'The user id must be a String (stringIds or uuidIds is on).'
           : 'The user id must be an int. For text ids, use stringIds: true.',
     );
   }
 
   AccessToken _token(Map<String, dynamic> row) {
-    return AccessToken._fromRow(row, stringIds: stringIds);
+    return AccessToken._fromRow(row, stringIds: _textIds, lowerCase: uuidIds);
   }
 
   static String _hashOf(String secret) {
@@ -265,20 +290,25 @@ class AccessTokenAuthDriver extends AuthDriver {
 
 /// One row of the access token table.
 class AccessToken {
-  AccessToken._fromRow(Map<String, dynamic> row, {required bool stringIds})
-    : id = _int(row['id']),
-      tokenableType = _text(row['tokenable_type']),
-      tokenableId = stringIds
-          ? _text(row['tokenable_id'])
-          : _int(row['tokenable_id']),
-      type = _text(row['type']),
-      name = row['name'] == null ? null : _text(row['name']),
-      _hash = _text(row['hash']),
-      abilities = _abilities(row['abilities']),
-      lastUsedAt = _date(row['last_used_at']),
-      expiresAt = _date(row['expires_at']),
-      createdAt = _date(row['created_at']),
-      updatedAt = _date(row['updated_at']);
+  AccessToken._fromRow(
+    Map<String, dynamic> row, {
+    required bool stringIds,
+    required bool lowerCase,
+  }) : id = _int(row['id']),
+       tokenableType = _text(row['tokenable_type']),
+       tokenableId = !stringIds
+           ? _int(row['tokenable_id'])
+           : lowerCase
+           ? _text(row['tokenable_id']).toLowerCase()
+           : _text(row['tokenable_id']),
+       type = _text(row['type']),
+       name = row['name'] == null ? null : _text(row['name']),
+       _hash = _text(row['hash']),
+       abilities = _abilities(row['abilities']),
+       lastUsedAt = _date(row['last_used_at']),
+       expiresAt = _date(row['expires_at']),
+       createdAt = _date(row['created_at']),
+       updatedAt = _date(row['updated_at']);
 
   final int id;
   final String tokenableType;

@@ -302,13 +302,15 @@ class Auth implements IAuth {
   Future<void> revokeToken(IDoxRequest req) async {
     AuthDriver current = _driver;
     if (current is AccessTokenAuthDriver) {
-      String? token = JwtAuthDriver.bearerToken(req);
-
       /// the token of `verifyToken` (eg. from `AuthMiddleware`), so it
-      /// is not checked again
-      AccessToken? found =
-          _accessToken ??
-          (token == null ? null : await current.check(token, _guard));
+      /// is not checked again. Else the driver checks the request, with
+      /// its own `verifyToken` (a bad header gives no token, not an error).
+      AccessToken? found = _accessToken;
+      if (found == null) {
+        Model<dynamic>? user = await current.verifyToken(req, _guard);
+        AccessToken? token = AccessTokenAuthDriver.tokenOf(req);
+        if (user != null && identical(token?.user, user)) found = token;
+      }
       Model<dynamic>? user = found?.user;
       if (found != null && user != null) {
         await current.revoke(user, _guard, found.id);

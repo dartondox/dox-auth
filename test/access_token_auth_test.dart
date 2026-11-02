@@ -67,6 +67,14 @@ class ClosedDriver extends AccessTokenAuthDriver {
   }
 }
 
+/// `HttpHeaders.value` throws like this for two `Authorization` headers
+class TwoHeaderRequest extends FakeRequest {
+  @override
+  String? header(String key) {
+    throw const HttpException('More than one value for header authorization');
+  }
+}
+
 /// rows of [sql] as one int, eg. a COUNT(*)
 Future<int> count(String connection, String sql) async {
   List<Map<String, dynamic>> rows = await SqlQueryBuilder()
@@ -144,7 +152,7 @@ void useConnection(String connection) {
           driver: AccessTokenAuthDriver(
             table: uuidTable,
             connection: connection,
-            stringIds: true,
+            uuidIds: true,
           ),
           provider: AuthProvider(model: () => TextUser()),
         ),
@@ -397,6 +405,44 @@ void tests(String connection) {
     expect(await Auth(guard: 'uuid').accessTokens(user), hasLength(1));
     await db.execute("DELETE FROM $uuidUsersTable WHERE id = '$id'");
     expect(await count(connection, 'SELECT COUNT(*) AS c FROM $uuidTable'), 0);
+  });
+
+  test('uuidIds: a uuid in upper case is kept in lower case', () async {
+    DBDriver db = SqlQueryBuilder().getDBDriver(connection);
+    const String id = 'AB6F3C2E-6A52-4C4E-9D3A-6F1C1E0A7B11';
+    await db.execute('DELETE FROM $uuidTable');
+    await db.execute('DELETE FROM $uuidUsersTable');
+    // Postgres keeps a uuid in lower case
+    await db.execute(
+      "INSERT INTO $uuidUsersTable (id) VALUES ('${id.toLowerCase()}')",
+    );
+    TextUser user = textUsers[id] = TextUser(id);
+    AccessToken token = await Auth(guard: 'uuid').createAccessToken(user);
+    expect(token.tokenableId, id.toLowerCase());
+    expect((await verify(token.value, guard: 'uuid')).isLoggedIn(), isTrue);
+    expect(await Auth(guard: 'uuid').accessTokens(user), hasLength(1));
+    expect(await Auth(guard: 'uuid').revokeAccessToken(user, token.id), isTrue);
+    expect((await verify(token.value, guard: 'uuid')).isLoggedIn(), isFalse);
+  });
+
+  test('a user of another model is an error, not a token', () async {
+    FakeAdmin admin = admins[1] = FakeAdmin(1, 'root@dox.dev');
+    AccessToken own = await Auth().createAccessToken(alice);
+    expect(() => Auth().createAccessToken(admin), throwsArgumentError);
+    expect(() => Auth().accessTokens(admin), throwsArgumentError);
+    expect(() => Auth().revokeAccessToken(admin, own.id), throwsArgumentError);
+    expect(() => Auth().revokeAllAccessTokens(admin), throwsArgumentError);
+    expect((await verify(own.value)).isLoggedIn(), isTrue);
+    expect(await count(connection, 'SELECT COUNT(*) AS c FROM $table'), 1);
+  });
+
+  test('two Authorization headers give no user, not an error', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    Auth auth = Auth();
+    await auth.verifyToken(TwoHeaderRequest());
+    expect(auth.isLoggedIn(), isFalse);
+    await Auth().revokeToken(TwoHeaderRequest());
+    expect((await verify(token.value)).isLoggedIn(), isTrue);
   });
 
   test('userFromToken checks an access token with no request', () async {

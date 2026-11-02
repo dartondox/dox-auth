@@ -162,7 +162,7 @@ Then run `dox migrate`. Options of `AccessTokenTables.up`:
 
 - `table: 'tokens'`: when the driver uses another table (`AccessTokenAuthDriver(table: 'tokens')`), pass the same name.
 - `stringIds: true`: for users with text ids. Set `AccessTokenAuthDriver(stringIds: true)` too. By default `tokenable_id` is an unsigned big int, like Sanctum and AdonisJS.
-- `uuidIds: true`: for users with uuid ids. `tokenable_id` is then a uuid column (`UUID` on Postgres), so `usersTable:` works with a uuid id. Set `AccessTokenAuthDriver(stringIds: true)` on the driver.
+- `uuidIds: true`: for users with uuid ids. `tokenable_id` is then a uuid column (`UUID` on Postgres), so `usersTable:` works with a uuid id. Set `AccessTokenAuthDriver(uuidIds: true)` too. A uuid is kept and compared in lower case, like Postgres does, so keep uuids in lower case in the users table.
 - `usersTable: 'users'`: adds a foreign key from `tokenable_id` to `users.id`, with cascade delete. Then the tokens of a deleted user are deleted too. The two id columns must have the same type.
 
 The migration makes the table on the default connection. If the driver uses another connection (`AccessTokenAuthDriver(connection: 'other')`), make the table on that connection.
@@ -202,6 +202,7 @@ auth.currentAccessToken; // the AccessToken of this request
 - A token fails (401) when its format is bad, the secret is wrong, it is expired, it was revoked (the row is deleted), its user is gone, it has another type, or it was made for a guard with another user table. A database error also fails the check, and it goes to `AppConfig.exceptionHandler`.
 - `tokenable_type` is the table name of the user model. If you rename the users table, the old tokens stop working.
 - Each token has a `type`. By default it is the guard name. A token works only on a guard with the same type, so two access token guards do not take each other's tokens. If you rename a guard, set `AccessTokenAuthDriver(type: 'old-name')` to keep its tokens working.
+- Pass a user of the guard's model. For admins, use `Auth(guard: 'admin').createAccessToken(admin)`. A user of another model throws an `ArgumentError`.
 - When you delete a user, call `revokeAllAccessTokens(user)` too, or use `usersTable:` in the migration. Then old tokens can never match a new user with the same id.
 - `tokenCan` is false when there is no access token, so a session or JWT login never passes it.
 - `last_used_at` is written at most once a minute per token. If this write fails, the error is reported and the request goes on.
