@@ -99,13 +99,7 @@ class AccessTokenAuthDriver extends AuthDriver {
   /// `Auth` always calls it.
   @override
   Future<Model<dynamic>?> verifyToken(IDoxRequest req, String guard) async {
-    String? token;
-    try {
-      token = JwtAuthDriver.bearerToken(req);
-    } catch (error, stackTrace) {
-      /// eg. two `Authorization` headers: a 401, like the JWT driver
-      AuthDriver.reportError(error, stackTrace);
-    }
+    String? token = JwtAuthDriver.bearerToken(req);
     AccessToken? found = token == null ? null : await check(token, guard);
     _ofRequest[req] = found;
     return found?.user;

@@ -9,7 +9,15 @@ import 'package:dox_orm/dox_orm.dart';
 import 'package:test/test.dart';
 
 import 'jwt_auth_test.dart'
-    show FakeAdmin, FakeRequest, FakeUser, admins, bearer, secret, users;
+    show
+        FakeAdmin,
+        FakeRequest,
+        FakeUser,
+        RecordingExceptionHandler,
+        admins,
+        bearer,
+        secret,
+        users;
 
 /// SQLite always runs. Postgres and MySQL run when `PG_PORT` and
 /// `MYSQL_PORT` are set (see .github/workflows/ci.yaml).
@@ -457,12 +465,15 @@ void tests(String connection) {
   });
 
   test('two Authorization headers give no user, not an error', () async {
+    RecordingExceptionHandler handler = RecordingExceptionHandler();
+    Dox().config = AppConfig(appKey: secret, exceptionHandler: handler);
     AccessToken token = await Auth().createAccessToken(alice);
     Auth auth = Auth();
     await auth.verifyToken(TwoHeaderRequest());
     expect(auth.isLoggedIn(), isFalse);
     await Auth().revokeToken(TwoHeaderRequest());
     expect((await verify(token.value)).isLoggedIn(), isTrue);
+    expect(handler.errors, isEmpty);
   });
 
   test('userFromToken checks an access token with no request', () async {

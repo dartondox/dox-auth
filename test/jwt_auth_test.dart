@@ -1434,11 +1434,16 @@ void main() {
       Dox().config = AppConfig(appKey: secret, exceptionHandler: handler);
     });
 
-    test('two Authorization headers: no user, error reported', () async {
+    test('two Authorization headers: no user, nothing reported', () async {
       Auth auth = Auth();
       await auth.verifyToken(TwoHeaderRequest());
       expect(auth.isLoggedIn(), isFalse);
-      expect(handler.errors.single, isA<HttpException>());
+      expect(JwtAuthDriver.bearerToken(TwoHeaderRequest()), isNull);
+      await expectLater(
+        () => AuthMiddleware().handle(TwoHeaderRequest()),
+        throwsA(isA<UnAuthorizedException>()),
+      );
+      expect(handler.errors, isEmpty);
     });
 
     test(
