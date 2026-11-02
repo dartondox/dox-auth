@@ -1026,6 +1026,37 @@ void main() {
     });
   });
 
+  group('id and guest |', () {
+    test('a guest has no id', () async {
+      Auth auth = Auth();
+      await auth.verifyToken(FakeRequest());
+      expect(auth.guest(), isTrue);
+      expect(auth.id(), isNull);
+    });
+
+    test('a bad token is a guest', () async {
+      Auth auth = Auth();
+      await auth.verifyToken(bearer('bad.token.here'));
+      expect(auth.guest(), isTrue);
+      expect(auth.id(), isNull);
+    });
+
+    test('a logged-in user gives the primary key', () async {
+      String token = Auth().login(users[1]!)!;
+      Auth auth = Auth();
+      await auth.verifyToken(bearer(token));
+      expect(auth.guest(), isFalse);
+      expect(auth.id(), 1);
+    });
+
+    test('the id is read when the primary key is hidden', () {
+      FakeUser user = FakeUser(7, 'h@dox.dev')
+        ..hidden = <String>['id', 'password'];
+      Auth auth = Auth()..login(user);
+      expect(auth.id(), 7);
+    });
+  });
+
   group('AuthMiddleware |', () {
     test('rejects a request with no token', () async {
       expect(

@@ -58,6 +58,8 @@ Route.get('/auth/user', <dynamic>[AuthMiddleware(), authController.user]);
 
 After `AuthMiddleware`, `req.auth?.user<User>()` is the logged in user.
 
+`Auth` also has `id()` (the primary key of the user, or null) and `guest()` (true when nobody is logged in). `req.auth` is an `IAuth`, so cast it first: `(req.auth as Auth?)?.id()`.
+
 ### Change APP_KEY
 
 New tokens are signed with the current `APP_KEY`. To keep old tokens working after a key change, put the old key in `AppConfig.previousKeys`. The JWT driver checks a token with the current key first, then with each old key. An expired token still fails. Remove the old key once the old tokens have expired.

@@ -183,6 +183,19 @@ class Auth implements IAuth {
     return _userData as T?;
   }
 
+  /// true when nobody is logged in. The opposite of [isLoggedIn].
+  bool guest() => !isLoggedIn();
+
+  /// The primary key of the logged-in user, or null for a guest. It is
+  /// read even when the key is hidden from `toJson()`.
+  /// ```
+  /// if (post.userId != (req.auth as Auth?)?.id()) abort(403);
+  /// ```
+  dynamic id() {
+    Model<dynamic>? user = _userData;
+    return user?.toMap(original: true)[user.primaryKey];
+  }
+
   /// The login throttle for `attempt` and `attemptSession`.
   /// Off (`null`) by default, like in 3.0.2. See [LoginThrottle].
   /// ```
