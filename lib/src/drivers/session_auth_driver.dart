@@ -26,7 +26,13 @@ class SessionAuthDriver extends AuthDriver {
   /// The user of the id in the session, or null.
   @override
   Future<Model<dynamic>?> verifyToken(IDoxRequest req, String guard) async {
-    dynamic id = (req as DoxRequest).session.get(sessionKey(guard));
+    return userFromSession((req as DoxRequest).session, guard);
+  }
+
+  /// The user of the id in [session], or null. Same as [verifyToken],
+  /// with no request (eg. for a socket).
+  Future<Model<dynamic>?> userFromSession(Session session, String guard) async {
+    dynamic id = session.get(sessionKey(guard));
     if (id == null) return null;
     Model<dynamic> model = AuthEngine().guard(guard).provider.model();
     return await model.find(id);

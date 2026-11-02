@@ -1,4 +1,7 @@
 // ignore_for_file: depend_on_referenced_packages
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:dox_auth/dox_auth.dart';
 import 'package:dox_core/dox_core.dart';
 import 'package:dox_orm/dox_orm.dart';
@@ -71,6 +74,15 @@ class FakeRequest implements IDoxRequest {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// A request with two `Authorization` headers: reading it throws, like
+/// `HttpHeaders.value` does.
+class TwoHeaderRequest extends FakeRequest {
+  @override
+  String? header(String key) {
+    throw HttpException('More than one value for header $key');
+  }
 }
 
 FakeRequest bearer(String? token) {
@@ -434,6 +446,123 @@ void main() {
         'password': 123,
       });
       expect(token, isNull);
+    });
+  });
+
+  group('userFromToken |', () {
+    test('gives the user of a good token, with no request', () async {
+      String token = Auth().login(users[1]!)!;
+      Auth auth = Auth();
+      FakeUser? user = await auth.userFromToken<FakeUser>(token);
+      expect(user?.email, 'a@dox.dev');
+      expect(auth.isLoggedIn(), isTrue);
+      expect(auth.user<FakeUser>(), same(user));
+    });
+
+    test('a null, empty or bad token gives null', () async {
+      for (String? token in <String?>[null, '', 'not-a-jwt', 'a.b.c']) {
+        Auth auth = Auth();
+        expect(await auth.userFromToken<FakeUser>(token), isNull);
+        expect(auth.isLoggedIn(), isFalse);
+      }
+    });
+
+    test('a token with the Bearer prefix gives null', () async {
+      String token = Auth().login(users[1]!)!;
+      expect(await Auth().userFromToken<FakeUser>('Bearer $token'), isNull);
+    });
+
+    test('a changed token gives null', () async {
+      String token = Auth().login(users[1]!)!;
+      List<String> parts = token.split('.');
+      // another user id in the payload, the old signature
+      String payload = base64Url
+          .encode(
+            utf8.encode(
+              jsonEncode(<String, dynamic>{
+                ...JWT.decode(token).payload as Map<String, dynamic>,
+                'id': 2,
+              }),
+            ),
+          )
+          .replaceAll('=', '');
+      users[2] = FakeUser(2, 'b@dox.dev', Hash.make('secret'));
+      String changed = '${parts[0]}.$payload.${parts[2]}';
+      expect(await Auth().userFromToken<FakeUser>(changed), isNull);
+      // a changed signature
+      String sig = parts[2];
+      String flipped =
+          '${parts[0]}.${parts[1]}.${sig.substring(0, sig.length - 2)}'
+          '${sig.endsWith('AA') ? 'BB' : 'AA'}';
+      expect(await Auth().userFromToken<FakeUser>(flipped), isNull);
+    });
+
+    test('a token signed by another secret gives null', () async {
+      String token = JWT(<String, dynamic>{
+        'id': 1,
+        'jti': 'j1',
+      }, audience: Audience.one('web')).sign(SecretKey('other-secret'));
+      expect(await Auth().userFromToken<FakeUser>(token), isNull);
+    });
+
+    test('a token with alg none or another algorithm gives null', () async {
+      JWT jwt = JWT(<String, dynamic>{
+        'id': 1,
+        'jti': 'j1',
+      }, audience: Audience.one('web'));
+      // the right key and HS256 work, so only the algorithm is wrong below
+      String good = jwt.sign(signingKey);
+      expect(await Auth().userFromToken<FakeUser>(good), isNotNull);
+      String token = jwt.sign(signingKey, algorithm: JWTAlgorithm.HS512);
+      String none =
+          '${base64Url.encode(utf8.encode('{"alg":"none","typ":"JWT"}')).replaceAll('=', '')}'
+          '.${token.split('.')[1]}.';
+      expect(await Auth().userFromToken<FakeUser>(none), isNull);
+      expect(await Auth().userFromToken<FakeUser>(token), isNull);
+    });
+
+    test('an expired token gives null', () async {
+      init(expiresIn: Duration(seconds: 1));
+      String token = Auth().login(users[1]!)!;
+      await Future<void>.delayed(Duration(seconds: 2));
+      expect(await Auth().userFromToken<FakeUser>(token), isNull);
+    });
+
+    test('a token of another guard gives null', () async {
+      String adminToken = Auth(guard: 'admin').login(admins[1]!)!;
+      expect(await Auth().userFromToken<FakeUser>(adminToken), isNull);
+      FakeUser? admin = await Auth(guard: 'admin')
+          .userFromToken<FakeUser>(adminToken);
+      expect(admin?.email, 'boss@dox.dev');
+    });
+
+    test('a revoked token gives null', () async {
+      init(revocation: true);
+      String token = Auth().login(users[1]!)!;
+      expect(await Auth().userFromToken<FakeUser>(token), isNotNull);
+      await Auth().revokeToken(bearer(token));
+      expect(await Auth().userFromToken<FakeUser>(token), isNull);
+    });
+
+    test('a token of a deleted user gives null', () async {
+      String token = Auth().login(users[1]!)!;
+      users.clear();
+      expect(await Auth().userFromToken<FakeUser>(token), isNull);
+    });
+
+    test('needs a JWT guard', () {
+      Auth.initialize(
+        AuthConfig(
+          defaultGuard: 'web',
+          guards: <String, AuthGuard>{
+            'web': AuthGuard(
+              driver: SessionAuthDriver(),
+              provider: AuthProvider(model: () => FakeUser()),
+            ),
+          },
+        ),
+      );
+      expect(() => Auth().userFromToken<FakeUser>('x'), throwsStateError);
     });
   });
 
@@ -1195,6 +1324,13 @@ void main() {
     setUp(() {
       handler = RecordingExceptionHandler();
       Dox().config = AppConfig(appKey: secret, exceptionHandler: handler);
+    });
+
+    test('two Authorization headers: no user, error reported', () async {
+      Auth auth = Auth();
+      await auth.verifyToken(TwoHeaderRequest());
+      expect(auth.isLoggedIn(), isFalse);
+      expect(handler.errors.single, isA<HttpException>());
     });
 
     test(

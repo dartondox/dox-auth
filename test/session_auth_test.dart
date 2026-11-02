@@ -220,6 +220,55 @@ void main() {
     },
   );
 
+  group('userFromSession', () {
+    test('gives the user of a logged in session cookie', () async {
+      Browser browser = Browser(client);
+      await browser.post('/login', <String, String>{
+        'email': 'a@dox.dev',
+        'password': 'secret',
+      });
+      Session session = await const SessionMiddleware().fromCookie(
+        browser.cookies['dox_session'],
+      );
+      Auth auth = Auth();
+      FakeUser? user = await auth.userFromSession<FakeUser>(session);
+      expect(user?.email, 'a@dox.dev');
+      expect(auth.isLoggedIn(), isTrue);
+    });
+
+    test('gives null after logout, for a guest, or a changed cookie', () async {
+      Browser browser = Browser(client);
+      await browser.post('/note');
+      Session guest = await const SessionMiddleware().fromCookie(
+        browser.cookies['dox_session'],
+      );
+      expect(await Auth().userFromSession<FakeUser>(guest), isNull);
+
+      await browser.post('/login', <String, String>{
+        'email': 'a@dox.dev',
+        'password': 'secret',
+      });
+      String raw = browser.cookies['dox_session']!;
+      String changed =
+          raw.substring(0, raw.length - 2) + (raw.endsWith('AA') ? 'BB' : 'AA');
+      Session bad = await const SessionMiddleware().fromCookie(changed);
+      expect(await Auth().userFromSession<FakeUser>(bad), isNull);
+
+      await browser.post('/logout');
+      Session out = await const SessionMiddleware().fromCookie(
+        browser.cookies['dox_session'],
+      );
+      expect(await Auth().userFromSession<FakeUser>(out), isNull);
+    });
+
+    test('needs a session guard', () {
+      expect(
+        () => Auth(guard: 'api').userFromSession<FakeUser>(Session()),
+        throwsStateError,
+      );
+    });
+  });
+
   test('session methods on a JWT guard throw', () async {
     expect((await client.get('/jwt')).status, 500);
   });

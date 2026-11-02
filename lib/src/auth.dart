@@ -66,6 +66,28 @@ class Auth implements IAuth {
     _userData = await _driver.verifyToken(req, _guard);
   }
 
+  /// The user of [token] (a JWT), or null. For code with no request,
+  /// like a socket. Same checks as a request with a `Bearer` header: a
+  /// null, bad, expired, revoked or changed token gives null. Needs a
+  /// guard with `JwtAuthDriver`.
+  /// ```
+  /// User? user = await Auth(guard: 'api').userFromToken(handshake.token);
+  /// ```
+  Future<T?> userFromToken<T>(String? token) async {
+    _userData = await _jwtDriver.userFromToken(token, _guard);
+    return _userData as T?;
+  }
+
+  /// The user that is logged in to [session], or null. For code with no
+  /// request, like a socket. Needs a guard with `SessionAuthDriver`.
+  /// ```
+  /// User? user = await Auth(guard: 'web').userFromSession(session);
+  /// ```
+  Future<T?> userFromSession<T>(Session session) async {
+    _userData = await _sessionDriver.userFromSession(session, _guard);
+    return _userData as T?;
+  }
+
   @override
   bool isLoggedIn() {
     return _userData != null;
