@@ -20,6 +20,7 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
   - A token `name` over 255 characters throws an `ArgumentError`, before anything is written.
   - A failed `last_used_at` write is reported, and the request goes on.
 - New: `dox auth:tokens-table` writes a migration for the access tokens table in `db/migration`. It calls `AccessTokenTables.up` and `AccessTokenTables.down`. Flags: `--uuid`, `--string-ids`, `--users-table=<table>` and `--users-key=<column>`. It does not overwrite: when a `create_access_tokens_table` migration is already there, it prints so and exits with code 1. It is a package command (`dox: commands:` in pubspec.yaml), so it needs a `dox` CLI that finds package commands.
+- Fix: `dox auth:tokens-table` with the same flag twice wrote a broken migration and exited with code 0. Now it prints an error, writes nothing and exits with code 1. `--users-key` without `--users-table` now prints a warning (it does nothing alone).
 - Needs dox_core with `package:dox_core/command.dart`.
 - New `AuthDriver.reportError(error, stackTrace)`: the JWT driver now uses it to report errors.
 - New dependency: `crypto`.
