@@ -368,8 +368,9 @@ class JwtAuthDriver extends AuthDriver {
     await _cache.put(_revokedKey(jti), 1, life);
   }
 
-  /// Revoke all tokens of the user [id] made before now (eg. after a
-  /// password change or a ban). Tokens made after this call work.
+  /// Revoke all tokens of the user [id] made before the current second
+  /// (eg. after a password change or a ban). Tokens made in the same
+  /// second as this call, or later, still work.
   /// Also drops the user from [userCacheTtl]. Needs [revocation].
   Future<void> revokeAllTokens(dynamic id, String guard) async {
     _needRevocation('revokeAllTokens');

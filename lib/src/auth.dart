@@ -181,6 +181,9 @@ class Auth implements IAuth {
     return _userData != null;
   }
 
+  /// The same as [isLoggedIn], with the Laravel name.
+  bool check() => isLoggedIn();
+
   @override
   T? user<T>() {
     return _userData as T?;
@@ -220,6 +223,21 @@ class Auth implements IAuth {
       return (await createAccessToken(user)).value;
     }
     return _createToken();
+  }
+
+  /// Check the credentials and log the user in for this `Auth` only.
+  /// true when they are right. Like Laravel `Auth::once`: it makes no
+  /// token and does not touch the session, so it works on any guard.
+  /// [throttle] counts it like [attempt]. Use [attempt] for a token, or
+  /// [attemptSession] to keep the login in the session.
+  /// ```
+  /// Auth auth = Auth(ip: req.ip());
+  /// if (!await auth.once(credentials)) throw UnAuthorizedException();
+  /// User user = auth.user<User>()!;
+  /// ```
+  Future<bool> once(Map<String, dynamic> credentials) async {
+    _userData = await _throttled(credentials, ip);
+    return _userData != null;
   }
 
   /// [AuthDriver.attempt], with [throttle] when it is on.
@@ -343,9 +361,10 @@ class Auth implements IAuth {
     await driver.revokeToken(token, _guard);
   }
 
-  /// Revoke all tokens of the user [id] made before now, on all
-  /// servers that share the cache. Use it after a password change or a
-  /// ban. Tokens made after this call work. Needs `JwtAuthDriver` with
+  /// Revoke all tokens of the user [id] made before the current second
+  /// (the `iat` claim is in whole seconds), on all servers that share
+  /// the cache. Use it after a password change or a ban. Tokens made in
+  /// the same second as this call, or later, still work. Needs `JwtAuthDriver` with
   /// `revocation: true`.
   /// ```
   /// await Auth().revokeAllTokens(user.id);
@@ -383,7 +402,7 @@ class Auth implements IAuth {
     if (driver is SessionAuthDriver) return driver;
     throw StateError(
       "The auth guard '$_guard' does not use SessionAuthDriver. "
-      'Use attempt() and login() for a token.',
+      'Use attempt() and login() for a token, and revokeToken() to log out.',
     );
   }
 

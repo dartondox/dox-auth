@@ -31,6 +31,10 @@ class WebRouter extends Router {
       AuthMiddleware(redirectTo: '/login'),
       (DoxRequest req) => 'page',
     ]);
+    Route.get('either', <dynamic>[
+      AuthMiddleware(guards: <String>['web', 'api']),
+      (DoxRequest req) => req.auth?.user<FakeUser>()?.email,
+    ]);
     Route.get('public', <dynamic>[
       AuthMiddleware(optional: true),
       (DoxRequest req) => req.auth?.user<FakeUser>()?.email ?? 'guest',
@@ -307,5 +311,61 @@ void main() {
 
   test('session methods on a JWT guard throw', () async {
     expect((await client.get('/jwt')).status, 500);
+  });
+
+  test(
+    'AuthMiddleware with several guards takes the first good login',
+    () async {
+      Browser browser = Browser(client);
+      expect((await browser.get('/either')).status, 401);
+      await browser.post('/login', <String, dynamic>{
+        'email': 'a@dox.dev',
+        'password': 'secret',
+      });
+      expect((await browser.get('/either')).body, 'a@dox.dev');
+
+      String token = Auth(guard: 'api').login(users[1]!)!;
+      TestResponse jwt = await client.withToken(token).get('/either');
+      expect(jwt.body, 'a@dox.dev');
+    },
+  );
+
+  test('AuthMiddleware takes guard or guards, not both', () {
+    expect(
+      () => AuthMiddleware(guard: 'web', guards: <String>['api']),
+      throwsArgumentError,
+    );
+    expect(() => AuthMiddleware(guards: <String>[]), throwsArgumentError);
+  });
+
+  test('check() is isLoggedIn(), once() gives a bool and no token', () async {
+    Auth jwt = Auth(guard: 'api');
+    expect(jwt.check(), isFalse);
+    expect(
+      await jwt.once(<String, dynamic>{
+        'email': 'a@dox.dev',
+        'password': 'nope',
+      }),
+      isFalse,
+    );
+    expect(jwt.check(), isFalse);
+    expect(
+      await jwt.once(<String, dynamic>{
+        'email': 'a@dox.dev',
+        'password': 'secret',
+      }),
+      isTrue,
+    );
+    expect(jwt.check(), isTrue);
+    expect(jwt.user<FakeUser>()?.email, 'a@dox.dev');
+
+    // works on a session guard too, with no session
+    expect(
+      await Auth().once(<String, dynamic>{
+        'email': 'a@dox.dev',
+        'password': 'secret',
+      }),
+      isTrue,
+    );
   });
 }

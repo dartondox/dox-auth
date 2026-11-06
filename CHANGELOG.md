@@ -2,6 +2,10 @@
 
 No breaking change. Apps on 3.0.2 work the same with no code change, and no user is logged out. The new, safer features are opt-in.
 
+- New `AuthMiddleware(guards: ['web', 'api'])`: tries several guards in order, like Laravel `auth:web,api`. The first good login sets `req.auth`. `AuthMiddleware(guard: ...)` works as before. Setting both, or an empty list, throws an `ArgumentError`.
+- New `Auth().check()`: the same as `isLoggedIn()`, with the Laravel name.
+- New `Auth().once(credentials)`: checks the credentials and gives true or false, like Laravel `Auth::once`. The user is logged in for this `Auth` only: no token, no session. The throttle counts it like `attempt`. `attempt()` still gives a token.
+- The error of `Auth().logout(req)` on a JWT or access token guard now says to use `revokeToken()`. `logout` still throws there: a silent no-op would leave the token working.
 - New `Auth().id()`: the primary key of the logged-in user, or null for a guest. It works when the key is hidden from `toJson()`. New `Auth().guest()`: true when nobody is logged in.
 - New `AuthMiddleware(optional: true)`: a good login sets `req.auth`, and guests go through too, so `req.can()` works on a public page. A bad, expired or revoked token is a guest. With the JWT and access token drivers, a database error is a guest too, but it is reported. With the session driver, a database error gives a 500. `redirectTo` is not used with `optional: true`. The default (`optional: false`) does not change.
 - New `GuestMiddleware(guard:, redirectTo:)`: lets only guests through, for login and register pages, like the Laravel `guest` middleware. A logged-in user goes to `redirectTo`, or gets a 403 (`already_logged_in`).
@@ -29,7 +33,7 @@ No breaking change. Apps on 3.0.2 work the same with no code change, and no user
 - Tokens made before this version (no `jti`) work exactly like in 3.0.2.
 - Security, opt-in: JWT revocation with `JwtAuthDriver(revocation: true)`. Off by default: then `verifyToken` does no cache read, like in 3.0.2.
   - New `Auth().revokeToken(req)`: a JWT logout. It revokes the bearer token of the request until it expires, also after `userFromToken` on the same `Auth`.
-  - New `Auth().revokeAllTokens(id)`: all tokens of the user made before now stop working (eg. after a password change or a ban). An old token with an `iat` claim is stopped too (tokens from `JwtAuthDriver` have one). An old token with no `iat` works until it expires.
+  - New `Auth().revokeAllTokens(id)`: all tokens of the user made before the current second stop working (eg. after a password change or a ban). `iat` is in whole seconds, so a token made in the same second as the call still works. An old token with an `iat` claim is stopped too (tokens from `JwtAuthDriver` have one). An old token with no `iat` works until it expires.
   - New `Auth().forgetUser(id)`: drops the user from the `userCacheTtl` cache on all isolates and servers that share the cache.
   - With revocation off, these three methods throw a `StateError`, so no one thinks a token is revoked when it is not.
   - `revokeToken` on an old token (no `jti`) does nothing: it can not go on the deny-list.
