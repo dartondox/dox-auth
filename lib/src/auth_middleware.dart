@@ -11,6 +11,14 @@ class AuthMiddleware implements IDoxMiddleware {
   /// ```
   final String? guard;
 
+  /// Several guard names, tried in order, like Laravel `auth:web,api`.
+  /// The first guard with a good login sets `req.auth`. Do not set
+  /// [guard] too.
+  /// ```
+  /// Route.get('/me', <dynamic>[AuthMiddleware(guards: <String>['web', 'api']), handler]);
+  /// ```
+  final List<String>? guards;
+
   /// Send a guest to this page (like `/login`) instead of a 401.
   /// For web pages. null gives the 401.
   final String? redirectTo;
@@ -27,18 +35,30 @@ class AuthMiddleware implements IDoxMiddleware {
   /// ```
   final bool optional;
 
-  AuthMiddleware({this.guard, this.redirectTo, this.optional = false});
+  AuthMiddleware({
+    this.guard,
+    this.guards,
+    this.redirectTo,
+    this.optional = false,
+  }) {
+    List<String>? names = guards;
+    if (names != null && (names.isEmpty || guard != null)) {
+      throw ArgumentError('Set guard or a non-empty guards list, not both.');
+    }
+  }
 
   @override
   Future<dynamic> handle(IDoxRequest req) async {
-    Auth auth = Auth(guard: guard);
+    for (String? name in guards ?? <String?>[guard]) {
+      Auth auth = Auth(guard: name);
 
-    // verify token from header and get user data from database
-    await auth.verifyToken(req);
+      // verify token from header and get user data from database
+      await auth.verifyToken(req);
 
-    if (auth.isLoggedIn()) {
-      req.auth = auth;
-      return req;
+      if (auth.isLoggedIn()) {
+        req.auth = auth;
+        return req;
+      }
     }
     if (optional) return req;
     String? page = redirectTo;

@@ -58,7 +58,11 @@ Route.get('/auth/user', <dynamic>[AuthMiddleware(), authController.user]);
 
 After `AuthMiddleware`, `req.auth?.user<User>()` is the logged in user.
 
-`Auth` also has `id()` (the primary key of the user, or null) and `guest()` (true when nobody is logged in). `req.auth?.id()` works with no cast. For a guest, `req.auth` is null.
+`Auth` also has `id()` (the primary key of the user, or null), `guest()` (true when nobody is logged in) and `check()` (the same as `isLoggedIn()`).
+
+`Auth().once(credentials)` checks the credentials and gives true or false. It makes no token and does not touch the session. The user is logged in for that `Auth` only, so `auth.user<User>()` works after it.
+
+A route can take more than one guard. `AuthMiddleware(guards: <String>['web', 'api'])` tries each guard in order. The first good login sets `req.auth`. `req.auth?.id()` works with no cast. For a guest, `req.auth` is null.
 
 ### Change APP_KEY
 
@@ -120,7 +124,7 @@ await Auth().forgetUser(id);       // drop the user from `userCacheTtl`, eg. aft
 ```
 
 - With revocation off, these three methods throw a `StateError`, so no one thinks a token is revoked when it is not.
-- `Auth().logout(req)` is the session logout, like in 3.0.2. For a JWT, use `revokeToken`.
+- `Auth().logout(req)` is the session logout, like in 3.0.2. On a JWT guard it throws. For a JWT, use `revokeToken`.
 - A revoked token stays on the deny-list only until it expires.
 - `revokeAllTokens` keeps tokens made after the call. A token made in the same second as the call also still works.
 - Give auth its own store, and never flush it. Pick it with `JwtAuthDriver(revocationStore: 'auth')`, for example a `redis` store with its own prefix. A flush of this store (`Cache().flush()`), or a `memory` store with `max_size` that drops old keys, brings revoked tokens back until they expire. With no `revocationStore`, the default app store is used.
