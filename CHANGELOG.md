@@ -1,4 +1,4 @@
-## Unreleased
+## 3.1.0
 
 No breaking change. Apps on 3.0.2 work the same with no code change, and no user is logged out. The new, safer features are opt-in.
 
