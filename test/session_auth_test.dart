@@ -33,8 +33,17 @@ class WebRouter extends Router {
     ]);
     Route.get('either', <dynamic>[
       AuthMiddleware(guards: <String>['web', 'api']),
-      (DoxRequest req) => req.auth?.user<FakeUser>()?.email,
+      (DoxRequest req) => _whoAndGuard(req),
     ]);
+    Route.get('either-api-first', <dynamic>[
+      AuthMiddleware(guards: <String>['api', 'web']),
+      (DoxRequest req) => _whoAndGuard(req),
+    ]);
+    Route.post('once', (DoxRequest req) async {
+      Auth auth = Auth(ip: req.ip());
+      bool ok = await auth.once(req.only(<String>['email', 'password']));
+      return ok ? 'ok ${auth.currentAccessToken}' : 'wrong';
+    });
     Route.get('public', <dynamic>[
       AuthMiddleware(optional: true),
       (DoxRequest req) => req.auth?.user<FakeUser>()?.email ?? 'guest',
@@ -57,6 +66,12 @@ class WebRouter extends Router {
       return 'no';
     });
   }
+}
+
+/// the email of the user and the guard that let it in
+String _whoAndGuard(DoxRequest req) {
+  Auth auth = req.auth as Auth;
+  return '${auth.user<FakeUser>()?.email} ${auth.guard}';
 }
 
 /// keeps the cookies of every answer, like a browser
@@ -322,13 +337,47 @@ void main() {
         'email': 'a@dox.dev',
         'password': 'secret',
       });
-      expect((await browser.get('/either')).body, 'a@dox.dev');
+      expect((await browser.get('/either')).body, 'a@dox.dev web');
 
       String token = Auth(guard: 'api').login(users[1]!)!;
       TestResponse jwt = await client.withToken(token).get('/either');
-      expect(jwt.body, 'a@dox.dev');
+      expect(jwt.body, 'a@dox.dev api');
     },
   );
+
+  test('a bad bearer token does not stop a good session login', () async {
+    Browser browser = Browser(client);
+    await browser.post('/login', <String, dynamic>{
+      'email': 'a@dox.dev',
+      'password': 'secret',
+    });
+    TestResponse res = await client
+        .withCookies(browser.cookies)
+        .withToken('not-a-token')
+        .get('/either-api-first');
+    expect(res.status, 200);
+    expect(res.body, 'a@dox.dev web');
+  });
+
+  test('once() counts in the throttle and leaves the session empty', () async {
+    Auth.throttle = LoginThrottle(maxAttempts: 2);
+    addTearDown(() => Auth.throttle = null);
+    Browser browser = Browser(client);
+    TestResponse ok = await browser.post('/once', <String, dynamic>{
+      'email': 'a@dox.dev',
+      'password': 'secret',
+    });
+    expect(ok.body, 'ok null');
+    expect((await browser.get('/me')).status, 401);
+
+    Map<String, dynamic> wrong = <String, dynamic>{
+      'email': 'once@dox.dev',
+      'password': 'nope',
+    };
+    expect((await browser.post('/once', wrong)).body, 'wrong');
+    expect((await browser.post('/once', wrong)).body, 'wrong');
+    expect((await browser.post('/once', wrong)).status, 429);
+  });
 
   test('AuthMiddleware takes guard or guards, not both', () {
     expect(

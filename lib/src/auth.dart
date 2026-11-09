@@ -217,6 +217,7 @@ class Auth implements IAuth {
   /// With `AccessTokenAuthDriver`, it gives a new access token with all
   /// abilities (see [createAccessToken]).
   Future<String?> attempt(Map<String, dynamic> credentials) async {
+    _accessToken = null;
     _userData = await _throttled(credentials, ip);
     Model<dynamic>? user = _userData;
     if (user != null && _driver is AccessTokenAuthDriver) {
@@ -236,6 +237,7 @@ class Auth implements IAuth {
   /// User user = auth.user<User>()!;
   /// ```
   Future<bool> once(Map<String, dynamic> credentials) async {
+    _accessToken = null;
     _userData = await _throttled(credentials, ip);
     return _userData != null;
   }
@@ -364,8 +366,8 @@ class Auth implements IAuth {
   /// Revoke all tokens of the user [id] made before the current second
   /// (the `iat` claim is in whole seconds), on all servers that share
   /// the cache. Use it after a password change or a ban. Tokens made in
-  /// the same second as this call, or later, still work. Needs `JwtAuthDriver` with
-  /// `revocation: true`.
+  /// the same second as this call, or later, still work. Needs
+  /// `JwtAuthDriver` with `revocation: true`.
   /// ```
   /// await Auth().revokeAllTokens(user.id);
   /// ```

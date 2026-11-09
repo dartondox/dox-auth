@@ -1,3 +1,8 @@
+## Unreleased
+
+- Fix: `once()` and `attempt()` kept the access token of the request. After a login of another user, `tokenCan()` and `currentAccessToken` still used the old token. They now drop it.
+- Tests: `AuthMiddleware` with several guards checks which guard let the user in, and a bad bearer token with a good session. `once()` counts in the login throttle and leaves the session empty.
+
 ## 3.1.0
 
 No breaking change. Apps on 3.0.2 work the same with no code change, and no user is logged out. The new, safer features are opt-in.
