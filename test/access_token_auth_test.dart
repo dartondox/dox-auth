@@ -795,6 +795,26 @@ void tests(String connection) {
     );
   });
 
+  test('once() and attempt() drop the access token of the request', () async {
+    AccessToken token = await Auth().createAccessToken(
+      alice,
+      abilities: <String>['chat'],
+    );
+    Auth auth = await verify(token.value);
+    expect(auth.tokenCan('chat'), isTrue);
+    await auth.once(<String, dynamic>{'email': 'bob@dox.dev', 'password': 'b'});
+    expect(auth.user<FakeUser>()?.id, 2);
+    expect(auth.currentAccessToken, isNull);
+    expect(auth.tokenCan('chat'), isFalse);
+
+    auth = await verify(token.value);
+    await auth.attempt(<String, dynamic>{
+      'email': 'bob@dox.dev',
+      'password': 'nope',
+    });
+    expect(auth.currentAccessToken, isNull);
+  });
+
   test('login() throws: it can not make a token without the database', () {
     expect(() => Auth().login(alice), throwsStateError);
   });
