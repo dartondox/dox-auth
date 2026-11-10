@@ -72,6 +72,13 @@ class Auth implements IAuth {
   /// [revokeToken]. [userFromToken] does not set it.
   AccessToken? _requestToken;
 
+  /// Drop the tokens that do not belong to [user]. Call it before the
+  /// user changes, so no old token is used or revoked for the new user.
+  void _dropTokensOfOthers(Model<dynamic> user) {
+    if (!identical(_accessToken?.user, user)) _accessToken = null;
+    if (!identical(_requestToken?.user, user)) _requestToken = null;
+  }
+
   @override
   Future<void> verifyToken(IDoxRequest req) async {
     AuthDriver driver = _driver;
@@ -158,6 +165,7 @@ class Auth implements IAuth {
   Future<T?> userFromToken<T>(String? token) async {
     AuthDriver driver = _driver;
     if (driver is AccessTokenAuthDriver) {
+      _requestToken = null;
       _accessToken = token == null ? null : await driver.check(token, _guard);
       _userData = _accessToken?.user;
       return _userData as T?;
@@ -266,6 +274,7 @@ class Auth implements IAuth {
   }
 
   String? login(Model<dynamic> user) {
+    _dropTokensOfOthers(user);
     _userData = user;
     return _createToken();
   }
@@ -278,6 +287,7 @@ class Auth implements IAuth {
   /// req.auth?.user<User>();
   /// ```
   void setUser(IDoxRequest req, Model<dynamic> user) {
+    _dropTokensOfOthers(user);
     _userData = user;
     req.auth = this;
   }
