@@ -815,6 +815,59 @@ void tests(String connection) {
     expect(auth.currentAccessToken, isNull);
   });
 
+  test('once() and attempt() drop the token that revokeToken uses', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    Auth auth = await verify(token.value);
+    await auth.once(<String, dynamic>{'email': 'bob@dox.dev', 'password': 'b'});
+    // no header: the old token of alice must not be revoked
+    await auth.revokeToken(FakeRequest());
+    expect((await verify(token.value)).isLoggedIn(), isTrue);
+
+    auth = await verify(token.value);
+    await auth.attempt(<String, dynamic>{
+      'email': 'bob@dox.dev',
+      'password': 'b',
+    });
+    await auth.revokeToken(FakeRequest());
+    expect((await verify(token.value)).isLoggedIn(), isTrue);
+  });
+
+  test(
+    'setUser() and userFromToken() drop the token of another user',
+    () async {
+      AccessToken token = await Auth().createAccessToken(alice);
+      AccessToken other = await Auth().createAccessToken(bob);
+
+      Auth auth = await verify(token.value);
+      auth.setUser(FakeRequest(), bob);
+      expect(auth.currentAccessToken, isNull);
+      // no header: the old token of alice must not be revoked
+      await auth.revokeToken(FakeRequest());
+      expect((await verify(token.value)).isLoggedIn(), isTrue);
+
+      auth = await verify(token.value);
+      await auth.userFromToken<FakeUser>(other.value);
+      await auth.revokeToken(FakeRequest());
+      expect((await verify(token.value)).isLoggedIn(), isTrue);
+    },
+  );
+
+  test('setUser() with the same user keeps the token of the request', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    Auth auth = await verify(token.value);
+    auth.setUser(FakeRequest(), auth.user<FakeUser>()!);
+    expect(auth.currentAccessToken?.id, token.id);
+    await auth.revokeToken(FakeRequest());
+    expect((await verify(token.value)).isLoggedIn(), isFalse);
+  });
+
+  test('setUser() with the same user loaded again keeps the token', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    Auth auth = await verify(token.value);
+    auth.setUser(FakeRequest(), FakeUser(1, alice.email, alice.password));
+    expect(auth.currentAccessToken?.id, token.id);
+  });
+
   test('login() throws: it can not make a token without the database', () {
     expect(() => Auth().login(alice), throwsStateError);
   });
