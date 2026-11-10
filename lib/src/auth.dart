@@ -75,8 +75,18 @@ class Auth implements IAuth {
   /// Drop the tokens that do not belong to [user]. Call it before the
   /// user changes, so no old token is used or revoked for the new user.
   void _dropTokensOfOthers(Model<dynamic> user) {
-    if (!identical(_accessToken?.user, user)) _accessToken = null;
-    if (!identical(_requestToken?.user, user)) _requestToken = null;
+    if (!_sameUser(_accessToken?.user, user)) _accessToken = null;
+    if (!_sameUser(_requestToken?.user, user)) _requestToken = null;
+  }
+
+  /// true for the same object, or for the same model with the same
+  /// primary key (the same user, loaded again).
+  bool _sameUser(Model<dynamic>? a, Model<dynamic> b) {
+    if (a == null) return false;
+    if (identical(a, b)) return true;
+    if (a.runtimeType != b.runtimeType) return false;
+    dynamic key = a.toMap(original: true)[a.primaryKey];
+    return key != null && key == b.toMap(original: true)[b.primaryKey];
   }
 
   @override
@@ -323,8 +333,8 @@ class Auth implements IAuth {
   /// Keep [user] in the session, with no password check.
   /// Needs a guard with `SessionAuthDriver`.
   void loginSession(DoxRequest req, Model<dynamic> user) {
-    _userData = user;
     _sessionDriver.login(req, user, _guard);
+    _userData = user;
   }
 
   /// End the session login. All session data is removed.

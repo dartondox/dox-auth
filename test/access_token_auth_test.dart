@@ -861,6 +861,13 @@ void tests(String connection) {
     expect((await verify(token.value)).isLoggedIn(), isFalse);
   });
 
+  test('setUser() with the same user loaded again keeps the token', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    Auth auth = await verify(token.value);
+    auth.setUser(FakeRequest(), FakeUser(1, alice.email, alice.password));
+    expect(auth.currentAccessToken?.id, token.id);
+  });
+
   test('login() throws: it can not make a token without the database', () {
     expect(() => Auth().login(alice), throwsStateError);
   });
