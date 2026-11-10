@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Fix: after `once()` or `attempt()` logged in another user, `revokeToken()` could still revoke the old access token of the request. `once()` and `attempt()` now drop that token too.
 - Fix: `once()` and `attempt()` kept the access token of the request. After a login of another user, `tokenCan()` and `currentAccessToken` still used the old token. They now drop it.
 - Tests: `AuthMiddleware` with several guards checks which guard let the user in, and a bad bearer token with a good session. `once()` counts in the login throttle and leaves the session empty.
 

@@ -815,6 +815,23 @@ void tests(String connection) {
     expect(auth.currentAccessToken, isNull);
   });
 
+  test('once() and attempt() drop the token that revokeToken uses', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    Auth auth = await verify(token.value);
+    await auth.once(<String, dynamic>{'email': 'bob@dox.dev', 'password': 'b'});
+    // no header: the old token of alice must not be revoked
+    await auth.revokeToken(FakeRequest());
+    expect((await verify(token.value)).isLoggedIn(), isTrue);
+
+    auth = await verify(token.value);
+    await auth.attempt(<String, dynamic>{
+      'email': 'bob@dox.dev',
+      'password': 'b',
+    });
+    await auth.revokeToken(FakeRequest());
+    expect((await verify(token.value)).isLoggedIn(), isTrue);
+  });
+
   test('login() throws: it can not make a token without the database', () {
     expect(() => Auth().login(alice), throwsStateError);
   });

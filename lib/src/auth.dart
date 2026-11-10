@@ -217,7 +217,7 @@ class Auth implements IAuth {
   /// With `AccessTokenAuthDriver`, it gives a new access token with all
   /// abilities (see [createAccessToken]).
   Future<String?> attempt(Map<String, dynamic> credentials) async {
-    _accessToken = null;
+    _accessToken = _requestToken = null;
     _userData = await _throttled(credentials, ip);
     Model<dynamic>? user = _userData;
     if (user != null && _driver is AccessTokenAuthDriver) {
@@ -237,7 +237,7 @@ class Auth implements IAuth {
   /// User user = auth.user<User>()!;
   /// ```
   Future<bool> once(Map<String, dynamic> credentials) async {
-    _accessToken = null;
+    _accessToken = _requestToken = null;
     _userData = await _throttled(credentials, ip);
     return _userData != null;
   }
