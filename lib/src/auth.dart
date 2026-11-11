@@ -2,6 +2,7 @@
 import 'dart:io';
 
 import 'package:dox_auth/src/auth_engine.dart';
+import 'package:dox_auth/src/auth_exception.dart';
 import 'package:dox_auth/src/drivers/access_token_auth_driver.dart';
 import 'package:dox_auth/src/drivers/jwt_auth_driver.dart';
 import 'package:dox_auth/src/drivers/session_auth_driver.dart';
@@ -47,11 +48,15 @@ class Auth implements IAuth {
 
   /// true when [hash] was not made with the cost [rounds] (default:
   /// `Hash.rounds`), or is not a bcrypt hash. After you raise the cost,
-  /// hash the password again on the next good login:
+  /// hash the password again on the next good login. With the
+  /// `endSessionsOnPasswordChange` flag, the new hash ends the other
+  /// sessions of the user, and this one too unless you call
+  /// [updateSessionPasswordHash] after `save()`:
   /// ```
   /// if (Auth.needsRehash(user.password)) {
   ///   user.password = await Hash.makeAsync(password);
   ///   await user.save();
+  ///   Auth().updateSessionPasswordHash(req, user); // a session login
   /// }
   /// ```
   static bool needsRehash(String hash, {int? rounds}) {
@@ -382,7 +387,10 @@ class Auth implements IAuth {
   }
 
   /// Keep [user] in the session, with no password check.
-  /// Needs a guard with `SessionAuthDriver`.
+  /// Needs a guard with `SessionAuthDriver`. With the
+  /// `endSessionsOnPasswordChange` flag, pass a fully loaded model: a
+  /// model from a `select()` with no password column looks like a user
+  /// with no password, and the session ends on the next request.
   void loginSession(DoxRequest req, Model<dynamic> user) {
     _sessionDriver.login(req, user, _guard);
     _userData = user;
@@ -392,6 +400,95 @@ class Auth implements IAuth {
   void logout(DoxRequest req) {
     _userData = null;
     _sessionDriver.logout(req);
+  }
+
+  /// Log the user out of all other sessions, like Laravel
+  /// `Auth::logoutOtherDevices`. It checks [password] against the
+  /// current password, hashes it again and saves the user. The new
+  /// hash ends every other session of the user that was made or used
+  /// while the flag was on. A session not used since the flag was turned
+  /// on is not ended (see `AuthFlags.endSessionsOnPasswordChange`). This
+  /// session stays logged in.
+  /// - Needs a session guard and the `endSessionsOnPasswordChange` flag:
+  ///   without the flag, other sessions do not check the password, so
+  ///   it throws a `StateError` and changes nothing.
+  /// - A wrong password, or no logged-in user, throws an
+  ///   `UnAuthorizedException`.
+  /// - A model hook that stops `save()` throws a `StateError`, and the
+  ///   session does not change. When `save()` throws, the old hash is
+  ///   put back on the model and the error is thrown again.
+  /// - It checks a password, so limit the route, eg. with a
+  ///   `LoginThrottle`, like a login.
+  /// ```
+  /// await (req.auth as Auth).logoutOtherDevices(req, req.input('password'));
+  /// ```
+  Future<void> logoutOtherDevices(DoxRequest req, String password) async {
+    SessionAuthDriver driver = _sessionDriver;
+    if (!AuthEngine().flags.endSessionsOnPasswordChange) {
+      throw StateError(
+        'logoutOtherDevices() needs the endSessionsOnPasswordChange flag: '
+        'AuthConfig(flags: AuthFlags(endSessionsOnPasswordChange: true)).',
+      );
+    }
+    Model<dynamic>? user =
+        _userData ?? await driver.userFromSession(req.session, _guard);
+    if (user == null) throw UnAuthorizedException();
+    String field = AuthEngine().guard(_guard).provider.passwordField;
+    dynamic hashed = SessionAuthDriver.currentPasswordHash(user, _guard);
+    if (hashed is! String || !await Hash.verifyAsync(password, hashed)) {
+      throw UnAuthorizedException(
+        message: 'The password does not match the current password.',
+        errorCode: 'wrong_password',
+      );
+    }
+    String newHash = await Hash.makeAsync(password, rounds: driver.hashRounds);
+    if (!user.setColumnValue(field, newHash)) {
+      throw StateError(
+        "${user.runtimeType} can not set '$field'. Run build_runner again.",
+      );
+    }
+    bool saved;
+    try {
+      saved = await user.save();
+    } catch (_) {
+      user.setColumnValue(field, hashed);
+      rethrow;
+    }
+    if (!saved) {
+      user.setColumnValue(field, hashed);
+      throw StateError(
+        'logoutOtherDevices() could not save ${user.runtimeType}: a model '
+        'hook stopped save(). Other sessions are still logged in.',
+      );
+    }
+    _userData = user;
+    driver.storePasswordHash(req.session, user, _guard);
+  }
+
+  /// Keep the current session logged in after the app changed the
+  /// password of [user]. Call it after `user.save()`. Only needed with
+  /// the `endSessionsOnPasswordChange` flag. Needs a session guard.
+  /// Pass a fully loaded model: a model from a `select()` with no
+  /// password column looks like a user with no password, and the
+  /// session ends on the next request.
+  /// [user] must be the user logged in to this session: another user
+  /// throws an `ArgumentError`.
+  /// ```
+  /// user.password = await Hash.makeAsync(newPassword);
+  /// await user.save();
+  /// Auth().updateSessionPasswordHash(req, user);
+  /// ```
+  void updateSessionPasswordHash(DoxRequest req, Model<dynamic> user) {
+    SessionAuthDriver driver = _sessionDriver;
+    dynamic id = req.session.get(SessionAuthDriver.sessionKey(_guard));
+    if (id == null || id != user.toMap(original: true)[user.primaryKey]) {
+      throw ArgumentError.value(
+        user,
+        'user',
+        'is not the user logged in to this session',
+      );
+    }
+    driver.storePasswordHash(req.session, user, _guard);
   }
 
   /// Revoke the bearer token of [req] (a token logout).

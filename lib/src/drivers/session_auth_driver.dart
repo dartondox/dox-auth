@@ -1,4 +1,7 @@
 // ignore_for_file: depend_on_referenced_packages
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart' show Hmac, sha256;
 import 'package:dox_auth/dox_auth.dart';
 import 'package:dox_core/dox_core.dart';
 import 'package:dox_orm/dox_orm.dart';
@@ -23,6 +26,73 @@ class SessionAuthDriver extends AuthDriver {
   /// The session key of the user id of [guard].
   static String sessionKey(String guard) => 'auth_$guard';
 
+  /// The session key of the password fingerprint of [guard]. See
+  /// [storePasswordHash].
+  static String passwordHashKey(String guard) => 'auth_${guard}_password_hash';
+
+  /// The label of the key that makes password fingerprints.
+  static const String _fingerprintLabel = 'dox:auth-session-password';
+
+  /// The password hash of [user] as it is now, also after a change and
+  /// `save()`, and also when the field is hidden from JSON. It reads the
+  /// current fields first, and the loaded row only when the model has no
+  /// such field. The column must give the same value on every read: a
+  /// hook or cast that makes a new value each time ends every session.
+  static dynamic currentPasswordHash(Model<dynamic> user, String guard) {
+    String field = AuthEngine().guard(guard).provider.passwordField;
+    Map<String, dynamic> current = user.toMap();
+    if (current.containsKey(field)) return current[field];
+    return user.toMap(original: true)[field];
+  }
+
+  /// An HMAC-SHA256 of the stored password hash of [user], with a key
+  /// made from [appKey] (default: `APP_KEY`). The session keeps this, not
+  /// the hash itself. A user with no password gets the fingerprint of an
+  /// empty text, so setting a password later changes it too.
+  static String passwordFingerprint(
+    Model<dynamic> user,
+    String guard, {
+    String? appKey,
+  }) {
+    dynamic hashed = currentPasswordHash(user, guard);
+    List<int> key = KeyDerivation.derive(
+      appKey ?? Dox().config.appKey,
+      _fingerprintLabel,
+    );
+    return Hmac(
+      sha256,
+      key,
+    ).convert(utf8.encode(hashed is String ? hashed : '')).toString();
+  }
+
+  /// Keep the password fingerprint of [user] in [session], only with the
+  /// `endSessionsOnPasswordChange` flag (else it does nothing). With the
+  /// flag, a session whose fingerprint does not match the user any more
+  /// is logged out.
+  void storePasswordHash(Session session, Model<dynamic> user, String guard) {
+    if (!AuthEngine().flags.endSessionsOnPasswordChange) return;
+    session.put(passwordHashKey(guard), passwordFingerprint(user, guard));
+  }
+
+  /// true when [stored] is the fingerprint of [user], with `APP_KEY` or
+  /// one of `previousKeys`. A match with an old key is stored again with
+  /// `APP_KEY`, so a key change does not log users out.
+  bool _sameFingerprint(
+    Session session,
+    String stored,
+    Model<dynamic> user,
+    String guard,
+  ) {
+    AppConfig config = Dox().config;
+    for (String key in <String>[config.appKey, ...config.previousKeys]) {
+      if (Hash.equals(stored, passwordFingerprint(user, guard, appKey: key))) {
+        if (key != config.appKey) storePasswordHash(session, user, guard);
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// The user of the id in the session, or null.
   @override
   Future<Model<dynamic>?> verifyToken(IDoxRequest req, String guard) async {
@@ -35,7 +105,23 @@ class SessionAuthDriver extends AuthDriver {
     dynamic id = session.get(sessionKey(guard));
     if (id == null) return null;
     Model<dynamic> model = AuthEngine().guard(guard).provider.model();
-    return await model.find(id);
+    Model<dynamic>? user = await model.find(id);
+    if (user == null || !AuthEngine().flags.endSessionsOnPasswordChange) {
+      return user;
+    }
+    dynamic stored = session.get(passwordHashKey(guard));
+    if (stored is! String) {
+      // a session from before this feature, or from when the flag was
+      // off: keep it, and start checking it
+      storePasswordHash(session, user, guard);
+      return user;
+    }
+    if (!_sameFingerprint(session, stored, user, guard)) {
+      // the password changed after this login
+      session.invalidate();
+      return null;
+    }
+    return user;
   }
 
   @override
@@ -56,6 +142,7 @@ class SessionAuthDriver extends AuthDriver {
     Session session = req.session;
     session.regenerate();
     session.put(sessionKey(guard), user.toMap(original: true)[user.primaryKey]);
+    storePasswordHash(session, user, guard);
   }
 
   /// Remove the login and all session data. The session gets a new id.
