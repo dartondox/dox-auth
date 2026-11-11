@@ -51,6 +51,17 @@ class AccessTokenAuthDriver extends AuthDriver {
   /// compared in lower case, like Postgres does.
   final bool uuidIds;
 
+  /// true: an error in a token check is thrown, not turned into "no
+  /// user". So the app can answer 503, and a short database problem
+  /// does not look like a logout to the client. It is the error as the
+  /// database driver or Dart gives it (no wrapper): a database error,
+  /// and also a token row that can not be read (eg. a bad date) or a
+  /// guard that is not set up. With `AuthMiddleware` it goes to
+  /// `AppConfig.exceptionHandler` (a 500 by default).
+  /// false (the default): the error is reported and the check gives
+  /// null (a 401). A failed `last_used_at` write is never thrown.
+  final bool throwOnError;
+
   bool get _textIds => stringIds || uuidIds;
 
   AccessTokenAuthDriver({
@@ -61,6 +72,7 @@ class AccessTokenAuthDriver extends AuthDriver {
     this.hashRounds = 10,
     this.stringIds = false,
     this.uuidIds = false,
+    this.throwOnError = false,
   }) {
     AuthDriver.prepareDummyHash(hashRounds);
   }
@@ -110,6 +122,7 @@ class AccessTokenAuthDriver extends AuthDriver {
   /// format, a wrong secret, is expired, revoked, of another type or
   /// user table, or its user is gone. A database error also gives null
   /// (fail closed), and it is reported to `AppConfig.exceptionHandler`.
+  /// With [throwOnError], the database error is thrown.
   /// Only a failed `last_used_at` write is reported and then ignored, so
   /// a short write problem does not log users out.
   Future<AccessToken?> check(String token, String guard) async {
@@ -149,6 +162,7 @@ class AccessTokenAuthDriver extends AuthDriver {
       }
       return found;
     } catch (error, stackTrace) {
+      if (throwOnError) rethrow;
       AuthDriver.reportError(error, stackTrace);
       return null;
     }
@@ -163,18 +177,30 @@ class AccessTokenAuthDriver extends AuthDriver {
     List<String> abilities = const <String>['*'],
     Duration? expiresIn,
   }) async {
-    String secret = base64Url
-        .encode(List<int>.generate(32, (_) => _random.nextInt(256)))
-        .replaceAll('=', '');
-    if (name != null && name.length > maxNameLength) {
-      throw ArgumentError.value(
-        name,
-        'name',
-        'is longer than $maxNameLength characters',
-      );
-    }
+    String secret = _secret();
+    _checkName(name);
     DateTime now = DateTime.now().toUtc();
     Duration? ttl = expiresIn ?? this.expiresIn;
+    return _insert(
+      user,
+      guard,
+      secret: secret,
+      name: name,
+      abilities: abilities,
+      now: now,
+      expiresAt: ttl == null ? null : now.add(ttl),
+    );
+  }
+
+  Future<AccessToken> _insert(
+    Model<dynamic> user,
+    String guard, {
+    required String secret,
+    required String? name,
+    required List<String> abilities,
+    required DateTime now,
+    required DateTime? expiresAt,
+  }) async {
     Map<String, dynamic> row = await _query.insert(<String, dynamic>{
       'tokenable_type': _tokenableType(guard),
       'tokenable_id': _idOf(user, guard),
@@ -183,7 +209,7 @@ class AccessTokenAuthDriver extends AuthDriver {
       'hash': _hashOf(secret),
       'abilities': jsonEncode(abilities),
       'last_used_at': null,
-      'expires_at': ttl == null ? null : now.add(ttl),
+      'expires_at': expiresAt,
       'created_at': now,
       'updated_at': now,
     });
@@ -191,6 +217,208 @@ class AccessTokenAuthDriver extends AuthDriver {
     token.user = user;
     token.value = '$prefix${token.id}.$secret';
     return token;
+  }
+
+  static String _secret() {
+    return base64Url
+        .encode(List<int>.generate(32, (_) => _random.nextInt(256)))
+        .replaceAll('=', '');
+  }
+
+  static void _checkName(String? name) {
+    if (name != null && name.length > maxNameLength) {
+      throw ArgumentError.value(
+        name,
+        'name',
+        'is longer than $maxNameLength characters',
+      );
+    }
+  }
+
+  /// Change the abilities of [token], eg. add `2fa` after the user gave
+  /// a two-step code. The plain token stays the same. [guard] must be
+  /// the guard of the token (`Auth().setAccessTokenAbilities` passes
+  /// it). [token] is changed only after the row was written.
+  ///
+  /// Throws:
+  /// - `ArgumentError` when [token] belongs to another guard (another
+  ///   type or user table). Nothing is written.
+  /// - [UnAuthorizedException] when the row is gone (revoked).
+  Future<void> setAbilities(
+    AccessToken token,
+    String guard,
+    List<String> abilities,
+  ) async {
+    _checkGuard(token, guard);
+
+    /// a copy, like the lists read from a row
+    List<String> list = List<String>.of(abilities);
+    int changed = await _own(token).update(<String, dynamic>{
+      'abilities': jsonEncode(list),
+      'updated_at': DateTime.now().toUtc(),
+    });
+
+    /// MySQL counts only changed rows: the same abilities in the same
+    /// second (DATETIME has no fraction) give 0. So look again.
+    if (changed == 0 && await _own(token).getFirst() == null) {
+      throw _revoked();
+    }
+    token.abilities = list;
+  }
+
+  /// A new token in place of [token], for the same user, with the name
+  /// and abilities of its row. [token] must have its `user`: use the
+  /// token of a checked request, or of `createAccessToken`.
+  ///
+  /// - [grace]: the old token works this much longer, so calls that are
+  ///   on the way do not fail. Default: it ends now. An old token that
+  ///   ends sooner keeps its end. A larger [grace] gives a stolen old
+  ///   token more time to be used. It can not make new tokens: see the
+  ///   next point.
+  /// - A token can be rotated only once. A second rotate of the same
+  ///   old token (in the grace time or after) throws and makes nothing.
+  ///   When two rotates run at the same time, one wins.
+  /// - [name]: null keeps the name of the old token.
+  /// - [expiresIn]: null gives the driver [expiresIn] (no end when that
+  ///   is null too). So rotating again and again keeps a login alive
+  ///   forever, unless the app sets its own limit.
+  ///
+  /// It runs in one transaction. The table needs the `rotated_at`
+  /// column (see [AccessTokenTables.up]).
+  ///
+  /// Throws:
+  /// - `ArgumentError`: no user on [token], a token or user of another
+  ///   guard, a negative [grace], a [grace] or [expiresIn] too large
+  ///   for a date, or a [name] that is too long. Nothing is written.
+  /// - [UnAuthorizedException] (a 401): the token is revoked, expired,
+  ///   or was already rotated. Nothing is written.
+  /// - `StateError`: the table has no `rotated_at` column.
+  Future<AccessToken> rotate(
+    AccessToken token,
+    String guard, {
+    Duration grace = Duration.zero,
+    String? name,
+    Duration? expiresIn,
+  }) async {
+    Model<dynamic>? user = token.user;
+    if (user == null) {
+      throw ArgumentError('The token has no user. Use a checked token.');
+    }
+    _checkGuard(token, guard);
+    if (_idOf(user, guard) != token.tokenableId) {
+      throw ArgumentError('token.user is not the user of the token.');
+    }
+    if (grace.isNegative) {
+      throw ArgumentError.value(grace, 'grace', 'must not be negative');
+    }
+    _checkName(name);
+
+    /// every value that can throw is made before the first write
+    DateTime now = DateTime.now().toUtc();
+    DateTime end = _plus(now, grace, 'grace');
+    Duration? ttl = expiresIn ?? this.expiresIn;
+    DateTime? nextEnd = ttl == null ? null : _plus(now, ttl, 'expiresIn');
+    String secret = _secret();
+
+    (AccessToken, DateTime?) result = await QueryBuilder.transaction(
+      connection: connection,
+      () async {
+        Map<String, dynamic>? row = await _own(token).getFirst();
+        if (row == null) throw _revoked();
+        if (!row.containsKey('rotated_at')) {
+          throw StateError(
+            "The table '$table' has no rotated_at column. rotate() needs "
+            'it. Add it in a new migration: '
+            "await schema.table('$table', (Table t) => "
+            "t.dateTimeTz('rotated_at').nullable());",
+          );
+        }
+
+        /// The winner: only one update can set rotated_at from null.
+        /// Postgres and MySQL lock the row until the end of this
+        /// transaction, so a second update waits, then sees rotated_at
+        /// is set and changes 0 rows. SQLite runs one write
+        /// transaction at a time.
+        int won = await _own(token)
+            .whereNull('rotated_at')
+            .update(<String, dynamic>{'rotated_at': now, 'updated_at': now});
+        if (won == 0) {
+          throw UnAuthorizedException(
+            message: 'The access token was already rotated.',
+          );
+        }
+
+        /// read again after the lock, so name and abilities are new
+        Map<String, dynamic>? locked = await _own(token).getFirst();
+        if (locked == null) throw _revoked();
+        AccessToken old = _token(locked);
+        if (old.tokenableId != token.tokenableId) throw _revoked();
+        DateTime? oldEnd = old.expiresAt;
+        if (oldEnd != null && !now.isBefore(oldEnd)) {
+          throw UnAuthorizedException(message: 'The access token is expired.');
+        }
+
+        AccessToken next = await _insert(
+          user,
+          guard,
+          secret: secret,
+          name: name ?? old.name,
+          abilities: old.abilities,
+          now: now,
+          expiresAt: nextEnd,
+        );
+        if (oldEnd == null || end.isBefore(oldEnd)) {
+          await _query.where('id', old.id).update(<String, dynamic>{
+            'expires_at': end,
+          });
+          oldEnd = end;
+        }
+        return (next, oldEnd);
+      },
+    );
+    token.expiresAt = result.$2;
+    return result.$1;
+  }
+
+  /// the row of [token], only when it is still of the same type, user
+  /// table and user
+  QueryBuilder<Map<String, dynamic>> _own(AccessToken token) {
+    return _query
+        .where('id', token.id)
+        .where('type', token.type)
+        .where('tokenable_type', token.tokenableType)
+        .where('tokenable_id', token.tokenableId);
+  }
+
+  /// [token] must be of [guard]: its type and its user table
+  void _checkGuard(AccessToken token, String guard) {
+    if (token.type != _typeOf(guard) ||
+        token.tokenableType != _tokenableType(guard)) {
+      throw ArgumentError(
+        "The token is not a token of the guard '$guard'. "
+        'Use Auth(guard: ...) of its own guard.',
+      );
+    }
+  }
+
+  static UnAuthorizedException _revoked() {
+    return UnAuthorizedException(
+      message: 'The access token is revoked or does not exist.',
+    );
+  }
+
+  /// the range of a Dart DateTime, in microseconds from 1970
+  static const int _maxMicros = 8640000000000000000;
+
+  /// [now] + [time]. Throws an `ArgumentError` when the date is out of
+  /// range: `DateTime.add` does not throw then, it wraps around.
+  static DateTime _plus(DateTime now, Duration time, String name) {
+    int at = now.microsecondsSinceEpoch;
+    int add = time.inMicroseconds;
+    if (add > _maxMicros - at || add < -_maxMicros - at) {
+      throw ArgumentError.value(time, name, 'is too large');
+    }
+    return now.add(time);
   }
 
   /// All tokens of [user] for [guard], newest first. Expired ones too.
@@ -340,9 +568,9 @@ class AccessToken {
   final String type;
   final String? name;
   final String _hash;
-  final List<String> abilities;
+  List<String> abilities;
   DateTime? lastUsedAt;
-  final DateTime? expiresAt;
+  DateTime? expiresAt;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -462,6 +690,8 @@ class AccessTokenTables {
       // DATETIME on MySQL: TIMESTAMP stops at 2038
       t.dateTimeTz('last_used_at').nullable();
       t.dateTimeTz('expires_at').nullable();
+      // set once by rotate(), so a token is rotated only once
+      t.dateTimeTz('rotated_at').nullable();
       t.dateTimeTz('created_at').nullable();
       t.dateTimeTz('updated_at').nullable();
       t.index(<String>['tokenable_type', 'tokenable_id']);

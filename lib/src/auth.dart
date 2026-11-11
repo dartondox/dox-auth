@@ -139,6 +139,57 @@ class Auth implements IAuth {
     );
   }
 
+  /// A new access token in place of [token], for the same user, with
+  /// the name and abilities of its row. Use it to renew a token before
+  /// it expires. Needs `AccessTokenAuthDriver`, and the `rotated_at`
+  /// column in the token table.
+  /// - [grace]: the old token works this much longer (default: it ends
+  ///   now), so calls that are on the way do not fail. A larger [grace]
+  ///   gives a stolen old token more time to be used.
+  /// - A token can be rotated only once. A second rotate of the same old
+  ///   token throws and makes nothing, even in the grace time.
+  /// - [expiresIn]: null gives the `expiresIn` of the driver. Rotating
+  ///   again and again keeps a login alive forever, unless the app sets
+  ///   its own limit.
+  ///
+  /// Throws an `UnAuthorizedException` (a 401) when the token is
+  /// revoked, expired or already rotated, and an `ArgumentError` for a
+  /// wrong argument (eg. a token of another guard, a negative [grace]).
+  /// See `AccessTokenAuthDriver.rotate`.
+  /// ```
+  /// Auth auth = req.auth as Auth;
+  /// AccessToken next = await auth.rotateAccessToken(
+  ///   auth.currentAccessToken!,
+  ///   grace: Duration(minutes: 2),
+  /// );
+  /// return {'token': next.value};
+  /// ```
+  Future<AccessToken> rotateAccessToken(
+    AccessToken token, {
+    Duration grace = Duration.zero,
+    String? name,
+    Duration? expiresIn,
+  }) {
+    return _accessTokenDriver.rotate(
+      token,
+      _guard,
+      grace: grace,
+      name: name,
+      expiresIn: expiresIn,
+    );
+  }
+
+  /// Change the abilities of [token], eg. add `2fa` after a two-step
+  /// code. The plain token stays the same. Needs `AccessTokenAuthDriver`.
+  /// Throws an `UnAuthorizedException` when the token is revoked, and an
+  /// `ArgumentError` when it is a token of another guard.
+  Future<void> setAccessTokenAbilities(
+    AccessToken token,
+    List<String> abilities,
+  ) {
+    return _accessTokenDriver.setAbilities(token, _guard, abilities);
+  }
+
   /// All access tokens of [user], newest first. Needs `AccessTokenAuthDriver`.
   Future<List<AccessToken>> accessTokens(Model<dynamic> user) {
     return _accessTokenDriver.all(user, _guard);

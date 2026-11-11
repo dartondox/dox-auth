@@ -219,6 +219,34 @@ await Auth(guard: 'api').revokeAccessToken(user, id);   // false when not a toke
 await Auth(guard: 'api').revokeAllAccessTokens(user);   // eg. after a password change
 await Auth(guard: 'api').revokeToken(req);              // logout: revoke the token of this request
 await Auth(guard: 'api').pruneExpiredAccessTokens();    // delete expired tokens, eg. from a scheduled job
+
+// renew: a new token, the old one works 2 more minutes
+AccessToken next = await auth.rotateAccessToken(
+  auth.currentAccessToken!,
+  grace: const Duration(minutes: 2),
+);
+
+// change what a token can do, eg. after a two-step code
+await auth.setAccessTokenAbilities(auth.currentAccessToken!, <String>['2fa']);
+```
+
+Rotate (renew) a token:
+
+- The new token gets the user, name and abilities of the old token's row. `expiresIn: null` gives the driver `expiresIn` (no end when that is null too).
+- A token can be rotated only once. A second rotate of the same old token throws an `UnAuthorizedException` (a 401) and makes no token, also in the grace time. When two rotates of one token run at the same time, only one works.
+- `grace` is how long the old token still works, so requests that are on the way do not fail. Default: it ends now. A larger `grace` gives a stolen old token more time to be used. It can not make new tokens.
+- A revoked or expired token throws an `UnAuthorizedException` too. A token of another guard, a negative `grace` or a token without its `user` throws an `ArgumentError`.
+- Each rotate gives a full new life. So a client that rotates again and again stays logged in forever. If you want a limit, check `token.createdAt` of the first login yourself, or set `expiresIn`.
+- `rotateAccessToken` needs the `rotated_at` column (see below). It runs in one transaction: when it fails, nothing is changed.
+
+`setAccessTokenAbilities` throws an `UnAuthorizedException` when the token is revoked, and an `ArgumentError` for a token of another guard.
+
+**Existing token tables:** tables made before this version have no `rotated_at` column. Everything works without it, except `rotateAccessToken`: it throws a `StateError` that names the column. To use it, add the column in a new migration:
+
+```dart
+await schema.table('auth_access_tokens', (Table t) {
+  t.dateTimeTz('rotated_at').nullable();
+});
 ```
 
 In a route behind `AuthMiddleware`, `(req.auth as Auth).revokeToken(req)` uses the token that was already checked, so it does not check it again.
@@ -231,7 +259,20 @@ if (!auth.tokenCan('posts:write')) throw ForbiddenHttpException();
 auth.currentAccessToken; // the AccessToken of this request
 ```
 
-- A token fails (401) when its format is bad, the secret is wrong, it is expired, it was revoked (the row is deleted), its user is gone, it has another type, or it was made for a guard with another user table. A database error also fails the check, and it goes to `AppConfig.exceptionHandler`.
+- A token fails (401) when its format is bad, the secret is wrong, it is expired, it was revoked (the row is deleted), its user is gone, it has another type, or it was made for a guard with another user table. A database error also fails the check, and it goes to `AppConfig.exceptionHandler`. With `AccessTokenAuthDriver(throwOnError: true)` the error is thrown, so the client is not logged out by a short database problem. This is also true for a token row that can not be read, or a wrong guard setup. The error goes to your `ExceptionHandler`, and the default answer is a 500. To answer 503, override `render`:
+
+  ```dart
+  class AppExceptionHandler extends ExceptionHandler {
+    @override
+    dynamic render(Object error, HttpRequest req) {
+      // PgException: dox_postgres_native. MysqlException: dox_mysql_native.
+      if (error is PgException) {
+        return HttpStatusException(503, headers: {'retry-after': '5'});
+      }
+      return super.render(error, req);
+    }
+  }
+  ```
 - `tokenable_type` is the table name of the user model. If you rename the users table, the old tokens stop working.
 - Each token has a `type`. By default it is the guard name. A token works only on a guard with the same type, so two access token guards do not take each other's tokens. If you rename a guard, set `AccessTokenAuthDriver(type: 'old-name')` to keep its tokens working.
 - Pass a user of the guard's model. For admins, use `Auth(guard: 'admin').createAccessToken(admin)`. A user of another model throws an `ArgumentError`.
