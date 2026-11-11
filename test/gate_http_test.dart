@@ -58,6 +58,10 @@ class GateRouter extends Router {
       const Can('admin'),
       (DoxRequest r) => 'ok',
     ]);
+    Route.get('members', <dynamic>[
+      const Can('members-only'),
+      (DoxRequest r) => 'members',
+    ]);
     Route.get('news', <dynamic>[
       const Can('read-news'),
       (DoxRequest r) => 'news',
@@ -109,6 +113,12 @@ void main() {
     Gate.flush();
     Gate.define('admin', (FakeUser user, _) => user.id == 1);
     Gate.define('read-news', (FakeUser? user, _) => true);
+    Gate.define(
+      'members-only',
+      (FakeUser? user, _) => user == null
+          ? GateResponse.deny('Members only')
+          : GateResponse.allow(),
+    );
     Gate.policy<Post>(PostPolicy());
     client = await DoxTestClient.start(
       AppConfig(appKey: secret, routers: <Router>[GateRouter()]),
@@ -181,6 +191,17 @@ void main() {
       expect((await client.get('/news')).status, 200);
     },
   );
+
+  test('with forbidGuest on, the guest 403 has the gate message', () async {
+    expect((await client.get('/members')).status, 401);
+    useFlags(const AuthFlags(forbidGuest: true));
+    TestResponse res = await client.get('/members');
+    expect(res.status, 403);
+    res.expectJson(<String, dynamic>{
+      'code': 'forbidden',
+      'message': 'Members only',
+    });
+  });
 
   test('forbidGuest is off again in the next test', () async {
     expect(AuthEngine().flags.forbidGuest, isFalse);

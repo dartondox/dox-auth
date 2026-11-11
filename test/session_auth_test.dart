@@ -32,6 +32,10 @@ class WebRouter extends Router {
       AuthMiddleware(redirectTo: '/login'),
       (DoxRequest req) => 'page',
     ]);
+    Route.get('page-either', <dynamic>[
+      AuthMiddleware(guards: <String>['web', 'api'], redirectTo: '/login'),
+      (DoxRequest req) => 'page',
+    ]);
     Route.get('either', <dynamic>[
       AuthMiddleware(guards: <String>['web', 'api']),
       (DoxRequest req) => _whoAndGuard(req),
@@ -264,6 +268,26 @@ void main() {
       },
     );
     expect(inertia.status, 302);
+  });
+
+  test('jsonNoRedirect with several guards: 401 after all fail', () async {
+    expect(
+      (await client.get('/page-either', headers: _jsonHeaders.first)).status,
+      302,
+    );
+    useFlags(const AuthFlags(jsonNoRedirect: true));
+    for (Map<String, String> headers in _jsonHeaders) {
+      expect((await client.get('/page-either', headers: headers)).status, 401);
+    }
+    TestResponse page = await client.get('/page-either');
+    expect(page.status, 302);
+    expect(page.header('location'), '/login');
+  });
+
+  test('AuthFlags.all through AuthConfig turns on every flag', () {
+    useFlags(const AuthFlags.all());
+    expect(AuthEngine().flags.forbidGuest, isTrue);
+    expect(AuthEngine().flags.jsonNoRedirect, isTrue);
   });
 
   test('AuthFlags.all turns on every flag', () {
