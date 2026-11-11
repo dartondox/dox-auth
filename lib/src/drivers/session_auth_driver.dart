@@ -33,6 +33,17 @@ class SessionAuthDriver extends AuthDriver {
   /// The label of the key that makes password fingerprints.
   static const String _fingerprintLabel = 'dox:auth-session-password';
 
+  /// The password hash of [user] as it is now, also after a change and
+  /// `save()`, and also when the field is hidden from JSON. It reads the
+  /// current fields first, and the loaded row only when the model has no
+  /// such field.
+  static dynamic currentPasswordHash(Model<dynamic> user, String guard) {
+    String field = AuthEngine().guard(guard).provider.passwordField;
+    Map<String, dynamic> current = user.toMap();
+    if (current.containsKey(field)) return current[field];
+    return user.toMap(original: true)[field];
+  }
+
   /// An HMAC-SHA256 of the stored password hash of [user], with a key
   /// made from [appKey] (default: `APP_KEY`). The session keeps this, not
   /// the hash itself. A user with no password gets the fingerprint of an
@@ -42,8 +53,7 @@ class SessionAuthDriver extends AuthDriver {
     String guard, {
     String? appKey,
   }) {
-    String field = AuthEngine().guard(guard).provider.passwordField;
-    dynamic hashed = user.toMap(original: true)[field];
+    dynamic hashed = currentPasswordHash(user, guard);
     List<int> key = KeyDerivation.derive(
       appKey ?? Dox().config.appKey,
       _fingerprintLabel,
@@ -54,10 +64,12 @@ class SessionAuthDriver extends AuthDriver {
     ).convert(utf8.encode(hashed is String ? hashed : '')).toString();
   }
 
-  /// Keep the password fingerprint of [user] in [session]. With the
-  /// `endSessionsOnPasswordChange` flag, a session whose fingerprint
-  /// does not match the user any more is logged out.
+  /// Keep the password fingerprint of [user] in [session], only with the
+  /// `endSessionsOnPasswordChange` flag (else it does nothing). With the
+  /// flag, a session whose fingerprint does not match the user any more
+  /// is logged out.
   void storePasswordHash(Session session, Model<dynamic> user, String guard) {
+    if (!AuthEngine().flags.endSessionsOnPasswordChange) return;
     session.put(passwordHashKey(guard), passwordFingerprint(user, guard));
   }
 
@@ -98,7 +110,8 @@ class SessionAuthDriver extends AuthDriver {
     }
     dynamic stored = session.get(passwordHashKey(guard));
     if (stored is! String) {
-      // a session from before this feature: keep it, and start checking it
+      // a session from before this feature, or from when the flag was
+      // off: keep it, and start checking it
       storePasswordHash(session, user, guard);
       return user;
     }

@@ -85,9 +85,10 @@ class WebRouter extends Router {
     // the app's own password change. `keep` keeps this session logged in.
     Route.post('change-password', <dynamic>[
       AuthMiddleware(),
-      (DoxRequest req) {
+      (DoxRequest req) async {
         FakeUser user = req.auth!.user<FakeUser>()!;
         user.password = Hash.make(req.input('password') as String, rounds: 4);
+        await user.save();
         if (req.input('keep') == true) {
           Auth().updateSessionPasswordHash(req, user);
         }
@@ -137,6 +138,28 @@ class WebRouter extends Router {
       Auth(guard: 'api').logout(req);
       return 'no';
     });
+  }
+}
+
+/// Acts like a dox_orm model: `find` loads a new copy of the row, and
+/// `toMap(original: true)` gives the row as it was loaded, not changed
+/// by `save()`. `save()` writes the fields back to [users].
+class FreshUser extends FakeUser {
+  FreshUser([super.id, super.email, super.password]) {
+    if (id != null) originalMap = convertToMap(this);
+  }
+
+  @override
+  Future<FakeUser?> find(dynamic arg1, [dynamic arg2]) async {
+    FakeUser? row = users[arg1];
+    return row == null ? null : FreshUser(row.id, row.email, row.password);
+  }
+
+  @override
+  Future<bool> save() async {
+    if (!FakeUser.saveOk) return false;
+    users[id!] = FreshUser(id, email, password);
+    return true;
   }
 }
 
@@ -215,11 +238,11 @@ void main() {
         guards: <String, AuthGuard>{
           'web': AuthGuard(
             driver: SessionAuthDriver(hashRounds: 4),
-            provider: AuthProvider(model: () => FakeUser()),
+            provider: AuthProvider(model: () => FreshUser()),
           ),
           'web2': AuthGuard(
             driver: SessionAuthDriver(hashRounds: 4),
-            provider: AuthProvider(model: () => FakeUser()),
+            provider: AuthProvider(model: () => FreshUser()),
           ),
           'api': AuthGuard(
             driver: JwtAuthDriver(secret: SecretKey(secret)),
@@ -553,6 +576,8 @@ void main() {
       expect(users[2]!.password, isNot(oldHash));
       expect(Hash.verify('secret', users[2]!.password!), isTrue);
 
+      // the next requests load the user again, with the new hash
+      expect((await laptop.get('/me')).body, 'b@dox.dev');
       expect((await laptop.get('/me')).body, 'b@dox.dev');
       expect((await phone.get('/me')).status, 401);
       // the same password still logs in
@@ -586,9 +611,9 @@ void main() {
     test('flag off: a password change keeps all sessions', () async {
       Browser phone = await loggedIn();
       Browser laptop = await loggedIn();
-      // login still writes the key, but nothing reads it
+      // login writes nothing new
       Session session = await sessionOf(phone);
-      expect(session.get(SessionAuthDriver.passwordHashKey('web')), isNotNull);
+      expect(session.has(SessionAuthDriver.passwordHashKey('web')), isFalse);
       await laptop.post('/change-password', <String, String>{
         'password': 'new',
       });
@@ -617,6 +642,8 @@ void main() {
         'password': 'new',
         'keep': true,
       });
+      // the next requests load the user again, with the new hash
+      expect((await laptop.get('/me')).body, 'b@dox.dev');
       expect((await laptop.get('/me')).body, 'b@dox.dev');
       expect((await phone.get('/me')).status, 401);
     });

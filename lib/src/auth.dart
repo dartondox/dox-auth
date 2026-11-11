@@ -48,11 +48,15 @@ class Auth implements IAuth {
 
   /// true when [hash] was not made with the cost [rounds] (default:
   /// `Hash.rounds`), or is not a bcrypt hash. After you raise the cost,
-  /// hash the password again on the next good login:
+  /// hash the password again on the next good login. With the
+  /// `endSessionsOnPasswordChange` flag, the new hash ends the other
+  /// sessions of the user, and this one too unless you call
+  /// [updateSessionPasswordHash] after `save()`:
   /// ```
   /// if (Auth.needsRehash(user.password)) {
   ///   user.password = await Hash.makeAsync(password);
   ///   await user.save();
+  ///   Auth().updateSessionPasswordHash(req, user); // a session login
   /// }
   /// ```
   static bool needsRehash(String hash, {int? rounds}) {
@@ -424,7 +428,7 @@ class Auth implements IAuth {
         _userData ?? await driver.userFromSession(req.session, _guard);
     if (user == null) throw UnAuthorizedException();
     String field = AuthEngine().guard(_guard).provider.passwordField;
-    dynamic hashed = user.toMap(original: true)[field];
+    dynamic hashed = SessionAuthDriver.currentPasswordHash(user, _guard);
     if (hashed is! String || !await Hash.verifyAsync(password, hashed)) {
       throw UnAuthorizedException(
         message: 'The password does not match the current password.',

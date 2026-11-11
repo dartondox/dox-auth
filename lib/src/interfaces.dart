@@ -64,7 +64,8 @@ class AuthFlags {
   /// the Laravel `AuthenticateSession` middleware. The session keeps a
   /// fingerprint of the password hash from the login. A session from
   /// before this flag is not logged out. `Auth().logoutOtherDevices()`
-  /// needs this flag.
+  /// needs this flag. A rehash on login (see `Auth.needsRehash`) changes
+  /// the hash too: call `Auth().updateSessionPasswordHash()` after it.
   // NEXT MAJOR: make this the default, then remove the flag.
   final bool endSessionsOnPasswordChange;
 
