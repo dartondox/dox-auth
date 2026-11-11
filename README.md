@@ -16,7 +16,7 @@ dart pub add dox_auth
 
 To see what is ready and what may still change, read [Status and roadmap](https://dartondox.dev/latest/concepts/status-and-roadmap/).
 
-A new app made with `dox create` already has it.
+A new app made with `dox create` does not have it. Add it with the command above.
 
 ## Use it
 
