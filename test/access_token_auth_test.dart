@@ -69,6 +69,9 @@ const String uuidUsersTable = 'test_at_uuid_users';
 const String fkTable = 'test_access_tokens_fk';
 const String usersTable = 'test_at_users';
 
+/// made like before `rotated_at` was added
+const String oldTable = 'test_access_tokens_old';
+
 /// Its own `verifyToken` that lets no one in.
 class ClosedDriver extends AccessTokenAuthDriver {
   ClosedDriver({super.table, super.connection});
@@ -191,6 +194,13 @@ void useConnection(String connection) {
           driver: driver(null),
           provider: AuthProvider(model: () => FakeAdmin()),
         ),
+        'old': AuthGuard(
+          driver: AccessTokenAuthDriver(
+            table: oldTable,
+            connection: connection,
+          ),
+          provider: AuthProvider(model: () => FakeUser()),
+        ),
       },
     ),
   );
@@ -242,6 +252,20 @@ void tests(String connection) {
       usersTable: keyUsersTable,
       usersKey: 'uid',
     );
+    await AccessTokenTables.down(schema, table: oldTable);
+    await schema.create(oldTable, (Table t) {
+      t.id();
+      t.string('tokenable_type');
+      t.unsignedBigInteger('tokenable_id');
+      t.string('type');
+      t.string('name').nullable();
+      t.string('hash', 64);
+      t.text('abilities');
+      t.dateTimeTz('last_used_at').nullable();
+      t.dateTimeTz('expires_at').nullable();
+      t.dateTimeTz('created_at').nullable();
+      t.dateTimeTz('updated_at').nullable();
+    });
     await AccessTokenTables.down(schema, table: uuidTable);
     await schema.dropIfExists(uuidUsersTable);
     await schema.create(uuidUsersTable, (Table t) => t.uuid('id').primary());
@@ -872,6 +896,25 @@ void tests(String connection) {
     expect(() => Auth().login(alice), throwsStateError);
   });
 
+  /// rows in the token table
+  Future<int> rows() => count(connection, 'SELECT COUNT(*) AS c FROM $table');
+
+  /// rows of the token table with rotated_at set
+  Future<int> rotated() => count(
+    connection,
+    'SELECT COUNT(*) AS c FROM $table WHERE rotated_at IS NOT NULL',
+  );
+
+  /// MySQL rounds the time to the second, so a token that ends "now"
+  /// can work up to half a second more there
+  Future<void> pastMysqlRounding() async {
+    if (connection == 'mysql') {
+      await Future<void>.delayed(const Duration(milliseconds: 1100));
+    }
+  }
+
+  Matcher refused = throwsA(isA<UnAuthorizedException>());
+
   test('setAccessTokenAbilities changes what the token can do', () async {
     AccessToken token = await Auth().createAccessToken(
       alice,
@@ -883,6 +926,28 @@ void tests(String connection) {
     Auth auth = await verify(token.value);
     expect(auth.tokenCan('2fa'), isTrue);
     expect(auth.tokenCan('other'), isFalse);
+
+    // the same abilities again (MySQL then changes 0 rows) still works
+    await Auth().setAccessTokenAbilities(token, <String>['2fa']);
+    await Auth().setAccessTokenAbilities(token, <String>['2fa']);
+  });
+
+  test('setAccessTokenAbilities on a revoked token throws', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    await Auth().revokeAccessToken(alice, token.id);
+    await expectLater(
+      Auth().setAccessTokenAbilities(token, <String>['2fa']),
+      refused,
+    );
+    expect(token.abilities, <String>['*']);
+  });
+
+  test('setAccessTokenAbilities keeps a copy of the list', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    List<String> list = <String>['posts:read'];
+    await Auth().setAccessTokenAbilities(token, list);
+    list.add('posts:write');
+    expect(token.abilities, <String>['posts:read']);
   });
 
   test('rotateAccessToken: a new token, the old one ends', () async {
@@ -896,31 +961,197 @@ void tests(String connection) {
     expect(next.name, 'cli');
     expect(next.abilities, <String>['posts:read']);
     expect((await verify(next.value)).user<FakeUser>()?.email, alice.email);
+    await pastMysqlRounding();
     expect((await verify(old.value)).isLoggedIn(), isFalse);
+    expect(await rows(), 2);
+    expect(await rotated(), 1);
   });
 
   test('rotateAccessToken: the old token works for the grace time', () async {
     AccessToken old = await Auth().createAccessToken(alice);
     await Auth().rotateAccessToken(old, grace: const Duration(minutes: 2));
     expect((await verify(old.value)).isLoggedIn(), isTrue);
-    AccessToken listed = (await Auth().accessTokens(alice)).last;
+    DateTime want = DateTime.now().toUtc().add(const Duration(minutes: 2));
     expect(
-      listed.expiresAt!
-          .difference(DateTime.now().toUtc().add(const Duration(minutes: 2)))
-          .abs(),
+      old.expiresAt!.difference(want).abs(),
       lessThan(const Duration(seconds: 5)),
     );
-
-    // a second rotate with a longer grace keeps the earlier end
-    await Auth().rotateAccessToken(old, grace: const Duration(days: 1));
-    listed = (await Auth().accessTokens(alice)).last;
+    AccessToken listed = (await Auth().accessTokens(alice)).last;
     expect(
-      listed.expiresAt!.isBefore(
-        DateTime.now().toUtc().add(const Duration(minutes: 3)),
-      ),
-      isTrue,
+      listed.expiresAt!.difference(want).abs(),
+      lessThan(const Duration(seconds: 5)),
     );
   });
+
+  test(
+    'rotateAccessToken: an old token that ends sooner keeps its end',
+    () async {
+      AccessToken old = await Auth(guard: 'short')
+          .createAccessToken(alice, expiresIn: const Duration(minutes: 1));
+      DateTime end = old.expiresAt!;
+      AccessToken next = await Auth(guard: 'short')
+          .rotateAccessToken(old, grace: const Duration(days: 1));
+      expect(old.expiresAt, end);
+      // expiresIn null: the driver default (1 hour on this guard)
+      expect(
+        next.expiresAt!
+            .difference(DateTime.now().toUtc().add(const Duration(hours: 1)))
+            .abs(),
+        lessThan(const Duration(seconds: 5)),
+      );
+    },
+  );
+
+  test(
+    'rotateAccessToken: a second rotate in the grace time is refused',
+    () async {
+      AccessToken old = await Auth().createAccessToken(alice);
+      await Auth().rotateAccessToken(old, grace: const Duration(minutes: 2));
+      await expectLater(Auth().rotateAccessToken(old), refused);
+
+      // also with a new object of the old token, from a check
+      AccessToken checked = (await verify(old.value)).currentAccessToken!;
+      await expectLater(Auth().rotateAccessToken(checked), refused);
+      expect(await rows(), 2);
+      expect((await verify(old.value)).isLoggedIn(), isTrue);
+    },
+  );
+
+  test('rotateAccessToken: a dead old token does not come back', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    AccessToken a = (await verify(token.value)).currentAccessToken!;
+    AccessToken b = (await verify(token.value)).currentAccessToken!;
+    expect(b.expiresAt, isNull);
+
+    await Auth().rotateAccessToken(a);
+    await expectLater(
+      Auth().rotateAccessToken(b, grace: const Duration(minutes: 2)),
+      refused,
+    );
+    await pastMysqlRounding();
+    expect((await verify(token.value)).isLoggedIn(), isFalse);
+    expect(await rows(), 2);
+  });
+
+  test('rotateAccessToken: two at the same time, one wins', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    AccessToken a = (await verify(token.value)).currentAccessToken!;
+    AccessToken b = (await verify(token.value)).currentAccessToken!;
+
+    Future<Object> run(AccessToken t) async {
+      try {
+        return await Auth().rotateAccessToken(t);
+      } on UnAuthorizedException catch (error) {
+        return error;
+      }
+    }
+
+    List<Object> results = await Future.wait(<Future<Object>>[run(a), run(b)]);
+    expect(results.whereType<AccessToken>(), hasLength(1));
+    expect(results.whereType<UnAuthorizedException>(), hasLength(1));
+    expect(await rows(), 2);
+  });
+
+  test('rotateAccessToken: a revoked token is refused', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    await Auth().revokeAccessToken(alice, token.id);
+    await expectLater(Auth().rotateAccessToken(token), refused);
+    expect(await rows(), 0);
+  });
+
+  test('rotateAccessToken: an expired token is refused', () async {
+    AccessToken token = await Auth().createAccessToken(
+      alice,
+      expiresIn: const Duration(minutes: -1),
+    );
+    await expectLater(
+      Auth().rotateAccessToken(token, grace: const Duration(minutes: 2)),
+      refused,
+    );
+    expect(await rows(), 1);
+    expect(await rotated(), 0);
+    expect((await verify(token.value)).isLoggedIn(), isFalse);
+  });
+
+  test('rotateAccessToken: copies abilities from the row', () async {
+    AccessToken token = await Auth().createAccessToken(alice, name: 'cli');
+    AccessToken other = (await verify(token.value)).currentAccessToken!;
+    await Auth().setAccessTokenAbilities(other, <String>['posts:read']);
+    expect(token.abilities, <String>['*']);
+    AccessToken next = await Auth().rotateAccessToken(token);
+    expect(next.abilities, <String>['posts:read']);
+    expect(next.name, 'cli');
+    expect((await verify(next.value)).tokenCan('posts:write'), isFalse);
+  });
+
+  test('rotate and setAbilities refuse a token of another guard', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    for (String guard in <String>['api2', 'admin']) {
+      expect(
+        () => Auth(guard: guard).rotateAccessToken(token),
+        throwsArgumentError,
+      );
+      expect(
+        () => Auth(guard: guard).setAccessTokenAbilities(token, <String>['x']),
+        throwsArgumentError,
+      );
+    }
+    expect(await rows(), 1);
+    expect(await rotated(), 0);
+    expect((await Auth().accessTokens(alice)).single.abilities, <String>['*']);
+    expect(token.abilities, <String>['*']);
+  });
+
+  test('rotateAccessToken refuses a token with another user', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    token.user = bob;
+    expect(() => Auth().rotateAccessToken(token), throwsArgumentError);
+    expect(await rows(), 1);
+  });
+
+  test('rotateAccessToken: a bad grace throws and writes nothing', () async {
+    AccessToken token = await Auth().createAccessToken(alice);
+    expect(
+      () => Auth().rotateAccessToken(token, grace: const Duration(seconds: -1)),
+      throwsArgumentError,
+    );
+    expect(
+      () => Auth().rotateAccessToken(
+        token,
+        grace: const Duration(days: 100000001),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => Auth().rotateAccessToken(
+        token,
+        expiresIn: const Duration(days: 100000001),
+      ),
+      throwsArgumentError,
+    );
+    expect(await rows(), 1);
+    expect(await rotated(), 0);
+  });
+
+  test(
+    'rotateAccessToken: when ending the old token fails, nothing is kept',
+    () async {
+      // a trigger makes the update of expires_at fail
+      DBDriver db = SqlQueryBuilder().getDBDriver(connection);
+      await db.execute(
+        'CREATE TRIGGER test_no_end BEFORE UPDATE OF expires_at ON $table '
+        "BEGIN SELECT RAISE(ABORT, 'no end'); END",
+      );
+      addTearDown(() => db.execute('DROP TRIGGER test_no_end'));
+      AccessToken token = await Auth().createAccessToken(alice);
+      await expectLater(Auth().rotateAccessToken(token), throwsA(anything));
+      expect(await rows(), 1);
+      expect(await rotated(), 0);
+      expect(token.expiresAt, isNull);
+      expect((await verify(token.value)).isLoggedIn(), isTrue);
+    },
+    skip: connection == 'sqlite' ? null : 'the trigger is SQLite only',
+  );
 
   test('rotateAccessToken needs a token with its user', () async {
     await Auth().createAccessToken(alice);
@@ -928,42 +1159,49 @@ void tests(String connection) {
     expect(() => Auth().rotateAccessToken(listed), throwsArgumentError);
   });
 
-  test('throwOnError: a database error is thrown, not a logout', () async {
-    Auth.initialize(
-      AuthConfig(
-        defaultGuard: 'api',
-        guards: <String, AuthGuard>{
-          'api': AuthGuard(
-            driver: AccessTokenAuthDriver(
-              table: 'no_such_table',
-              connection: connection,
-              throwOnError: true,
-            ),
-            provider: AuthProvider(model: () => FakeUser()),
-          ),
-        },
+  test('a table with no rotated_at works, only rotate throws', () async {
+    Auth auth = Auth(guard: 'old');
+    AccessToken token = await auth.createAccessToken(alice);
+    expect((await verify(token.value, guard: 'old')).isLoggedIn(), isTrue);
+    await auth.setAccessTokenAbilities(token, <String>['2fa']);
+    expect((await auth.accessTokens(alice)).single.abilities, <String>['2fa']);
+    await expectLater(
+      auth.rotateAccessToken(token),
+      throwsA(
+        isA<StateError>().having(
+          (StateError e) => e.message,
+          'message',
+          contains("t.dateTimeTz('rotated_at').nullable()"),
+        ),
       ),
     );
-    String fake = 'oat_1.${'A' * 43}';
-    await expectLater(verify(fake), throwsA(anything));
+    expect(await auth.accessTokens(alice), hasLength(1));
+    expect(await auth.revokeAccessToken(alice, token.id), isTrue);
   });
 
-  test('a missing table fails closed', () async {
-    Auth.initialize(
-      AuthConfig(
-        defaultGuard: 'api',
-        guards: <String, AuthGuard>{
-          'api': AuthGuard(
-            driver: AccessTokenAuthDriver(
-              table: 'no_such_table',
-              connection: connection,
+  test('throwOnError: true throws what false turns into a 401', () async {
+    void use({required bool throwOnError}) {
+      Auth.initialize(
+        AuthConfig(
+          defaultGuard: 'api',
+          guards: <String, AuthGuard>{
+            'api': AuthGuard(
+              driver: AccessTokenAuthDriver(
+                table: 'no_such_table',
+                connection: connection,
+                throwOnError: throwOnError,
+              ),
+              provider: AuthProvider(model: () => FakeUser()),
             ),
-            provider: AuthProvider(model: () => FakeUser()),
-          ),
-        },
-      ),
-    );
+          },
+        ),
+      );
+    }
+
     String fake = 'oat_1.${'A' * 43}';
+    use(throwOnError: true);
+    await expectLater(verify(fake), throwsA(anything));
+    use(throwOnError: false);
     expect((await verify(fake)).isLoggedIn(), isFalse);
   });
 }

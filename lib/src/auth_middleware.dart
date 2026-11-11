@@ -28,8 +28,9 @@ class AuthMiddleware implements IDoxMiddleware {
   /// or a bad, expired or revoked token, goes on with `req.auth` null.
   /// With `JwtAuthDriver` and `AccessTokenAuthDriver`, a database error
   /// also goes on as a guest, but it is reported (see
-  /// `AuthDriver.reportError`). With `SessionAuthDriver`, a database
-  /// error gives a 500. [redirectTo] is not used when this is true.
+  /// `AuthDriver.reportError`). With `AccessTokenAuthDriver(throwOnError:
+  /// true)` and with `SessionAuthDriver`, a database error is thrown (a
+  /// 500 by default). [redirectTo] is not used when this is true.
   /// ```
   /// Route.get('/posts', <dynamic>[AuthMiddleware(optional: true), handler]);
   /// ```
