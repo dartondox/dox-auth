@@ -1,4 +1,5 @@
 // ignore_for_file: depend_on_referenced_packages
+import 'package:dox_auth/src/auth_engine.dart';
 import 'package:dox_auth/src/auth_exception.dart';
 import 'package:dox_auth/src/gate.dart';
 import 'package:dox_core/dox_core.dart';
@@ -7,6 +8,7 @@ import 'package:dox_core/dox_core.dart';
 /// ```
 /// if (await req.can('update', post)) { ... }
 /// await req.authorize('update', post); // 401 for a guest, else 403
+/// // with AuthFlags(forbidGuest: true), a guest gets 403 too
 /// ```
 extension GateRequest on IDoxRequest {
   /// the user of `req.auth`, or null for a guest
@@ -24,18 +26,22 @@ extension GateRequest on IDoxRequest {
 
   /// Stop the request when the user may not do [ability].
   /// A guest gets 401 (`UnAuthorizedException`), a user gets 403.
+  /// With `AuthFlags(forbidGuest: true)`, a guest gets 403 too.
   Future<void> authorize(String ability, [Object? subject]) async {
     Object? user = _user;
     GateResponse response = await Gate.inspect(user, ability, subject);
     if (response.allowed) return;
-    if (user == null) throw UnAuthorizedException();
+    if (user == null && !AuthEngine().flags.forbidGuest) {
+      throw UnAuthorizedException();
+    }
     response.authorize();
   }
 }
 
 /// Middleware: go on only when the user may do [ability].
 /// Put it after `AuthMiddleware`, so `req.auth` is set.
-/// A guest gets 401, a user who may not do it gets 403.
+/// A guest gets 401, a user who may not do it gets 403. With
+/// `AuthFlags(forbidGuest: true)`, a guest gets 403 too.
 /// ```
 /// Route.post('posts', <dynamic>[AuthMiddleware(), Can('create', subject: Post), store]);
 ///

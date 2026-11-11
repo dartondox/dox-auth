@@ -20,7 +20,9 @@ class AuthMiddleware implements IDoxMiddleware {
   final List<String>? guards;
 
   /// Send a guest to this page (like `/login`) instead of a 401.
-  /// For web pages. null gives the 401.
+  /// For web pages. null gives the 401. With
+  /// `AuthFlags(jsonNoRedirect: true)`, a JSON or XHR client gets the
+  /// 401 and no redirect (see `DoxRequest.expectsJson`).
   final String? redirectTo;
 
   /// Let guests through too. A good login still sets `req.auth`, so
@@ -63,8 +65,14 @@ class AuthMiddleware implements IDoxMiddleware {
     }
     if (optional) return req;
     String? page = redirectTo;
-    if (page != null) return redirect(page);
+    if (page != null && !_wantsJson(req)) return redirect(page);
     throw UnAuthorizedException();
+  }
+
+  /// true when `jsonNoRedirect` is on and the client wants JSON.
+  static bool _wantsJson(IDoxRequest req) {
+    if (!AuthEngine().flags.jsonNoRedirect) return false;
+    return req is DoxRequest && req.expectsJson();
   }
 }
 

@@ -1,5 +1,10 @@
 ## Unreleased
 
+- New, opt-in: `AuthConfig(flags: AuthFlags(...))`. Each flag turns on one Laravel behavior. All are off by default, so nothing changes. `AuthFlags.all()` turns on every flag.
+  - `forbidGuest`: `req.authorize()` and `Can` give a guest 403, not 401.
+  - `jsonNoRedirect`: `AuthMiddleware(redirectTo: ...)` gives a JSON or XHR client a 401, not a redirect. An Inertia request still gets the redirect.
+- Docs: the `rotate` docs now say that an old token works on every route in its grace time, also on routes that make tokens. Only a second rotate is refused. Keep `grace` short.
+- Docs: the `needsRehash` sample uses `await Hash.makeAsync(...)`.
 - New `Auth().rotateAccessToken(token, grace:, name:, expiresIn:)`: a new access token in place of an old one. It gets the user, name and abilities of the old token's row. The old token works for `grace` more (default: it ends now). A token can be rotated only once: a second rotate throws an `UnAuthorizedException` and makes nothing. A revoked or expired token is refused the same way. It runs in one transaction. A token of another guard, or a negative `grace`, throws an `ArgumentError`. The driver method is `rotate(token, guard)`.
 - `rotateAccessToken` needs a new nullable `rotated_at` column in the token table. `AccessTokenTables.up` (and so `dox auth:tokens-table`) adds it to new tables. Existing apps that want to rotate tokens add it in a new migration: `await schema.table('auth_access_tokens', (Table t) { t.dateTimeTz('rotated_at').nullable(); });`. Without the column everything else works as before, and only `rotateAccessToken` throws a `StateError` that says what to add.
 - New `Auth().setAccessTokenAbilities(token, abilities)`: changes the abilities of a token, eg. to add `2fa` after a two-step code. A revoked token throws an `UnAuthorizedException`, and a token of another guard an `ArgumentError`. The driver method is `setAbilities(token, guard, abilities)`.
