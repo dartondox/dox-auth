@@ -405,6 +405,10 @@ class Auth implements IAuth {
   ///   it throws a `StateError` and changes nothing.
   /// - A wrong password, or no logged-in user, throws an
   ///   `UnAuthorizedException`.
+  /// - A model hook that stops `save()` throws a `StateError`, and the
+  ///   session does not change.
+  /// - It checks a password, so limit the route, eg. with a
+  ///   `LoginThrottle`, like a login.
   /// ```
   /// await (req.auth as Auth).logoutOtherDevices(req, req.input('password'));
   /// ```
@@ -433,7 +437,13 @@ class Auth implements IAuth {
         "${user.runtimeType} can not set '$field'. Run build_runner again.",
       );
     }
-    await user.save();
+    if (!await user.save()) {
+      user.setColumnValue(field, hashed);
+      throw StateError(
+        'logoutOtherDevices() could not save ${user.runtimeType}: a model '
+        'hook stopped save(). Other sessions are still logged in.',
+      );
+    }
     _userData = user;
     driver.storePasswordHash(req.session, user, _guard);
   }
@@ -441,13 +451,24 @@ class Auth implements IAuth {
   /// Keep the current session logged in after the app changed the
   /// password of [user]. Call it after `user.save()`. Only needed with
   /// the `endSessionsOnPasswordChange` flag. Needs a session guard.
+  /// [user] must be the user logged in to this session: another user
+  /// throws an `ArgumentError`.
   /// ```
   /// user.password = await Hash.makeAsync(newPassword);
   /// await user.save();
   /// Auth().updateSessionPasswordHash(req, user);
   /// ```
   void updateSessionPasswordHash(DoxRequest req, Model<dynamic> user) {
-    _sessionDriver.storePasswordHash(req.session, user, _guard);
+    SessionAuthDriver driver = _sessionDriver;
+    dynamic id = req.session.get(SessionAuthDriver.sessionKey(_guard));
+    if (id == null || id != user.toMap(original: true)[user.primaryKey]) {
+      throw ArgumentError.value(
+        user,
+        'user',
+        'is not the user logged in to this session',
+      );
+    }
+    driver.storePasswordHash(req.session, user, _guard);
   }
 
   /// Revoke the bearer token of [req] (a token logout).

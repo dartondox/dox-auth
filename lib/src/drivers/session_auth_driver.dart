@@ -1,7 +1,7 @@
 // ignore_for_file: depend_on_referenced_packages
 import 'dart:convert';
 
-import 'package:crypto/crypto.dart';
+import 'package:crypto/crypto.dart' show Hmac, sha256;
 import 'package:dox_auth/dox_auth.dart';
 import 'package:dox_core/dox_core.dart';
 import 'package:dox_orm/dox_orm.dart';
@@ -30,21 +30,54 @@ class SessionAuthDriver extends AuthDriver {
   /// [storePasswordHash].
   static String passwordHashKey(String guard) => 'auth_${guard}_password_hash';
 
-  /// A SHA-256 of the stored password hash of [user], or null when the
-  /// user has no password. The session keeps this, not the hash itself.
-  static String? passwordFingerprint(Model<dynamic> user, String guard) {
+  /// The label of the key that makes password fingerprints.
+  static const String _fingerprintLabel = 'dox:auth-session-password';
+
+  /// An HMAC-SHA256 of the stored password hash of [user], with a key
+  /// made from [appKey] (default: `APP_KEY`). The session keeps this, not
+  /// the hash itself. A user with no password gets the fingerprint of an
+  /// empty text, so setting a password later changes it too.
+  static String passwordFingerprint(
+    Model<dynamic> user,
+    String guard, {
+    String? appKey,
+  }) {
     String field = AuthEngine().guard(guard).provider.passwordField;
     dynamic hashed = user.toMap(original: true)[field];
-    if (hashed is! String) return null;
-    return sha256.convert(utf8.encode(hashed)).toString();
+    List<int> key = KeyDerivation.derive(
+      appKey ?? Dox().config.appKey,
+      _fingerprintLabel,
+    );
+    return Hmac(
+      sha256,
+      key,
+    ).convert(utf8.encode(hashed is String ? hashed : '')).toString();
   }
 
   /// Keep the password fingerprint of [user] in [session]. With the
   /// `endSessionsOnPasswordChange` flag, a session whose fingerprint
   /// does not match the user any more is logged out.
   void storePasswordHash(Session session, Model<dynamic> user, String guard) {
-    String? fingerprint = passwordFingerprint(user, guard);
-    if (fingerprint != null) session.put(passwordHashKey(guard), fingerprint);
+    session.put(passwordHashKey(guard), passwordFingerprint(user, guard));
+  }
+
+  /// true when [stored] is the fingerprint of [user], with `APP_KEY` or
+  /// one of `previousKeys`. A match with an old key is stored again with
+  /// `APP_KEY`, so a key change does not log users out.
+  bool _sameFingerprint(
+    Session session,
+    String stored,
+    Model<dynamic> user,
+    String guard,
+  ) {
+    AppConfig config = Dox().config;
+    for (String key in <String>[config.appKey, ...config.previousKeys]) {
+      if (Hash.equals(stored, passwordFingerprint(user, guard, appKey: key))) {
+        if (key != config.appKey) storePasswordHash(session, user, guard);
+        return true;
+      }
+    }
+    return false;
   }
 
   /// The user of the id in the session, or null.
@@ -64,12 +97,12 @@ class SessionAuthDriver extends AuthDriver {
       return user;
     }
     dynamic stored = session.get(passwordHashKey(guard));
-    if (stored == null) {
-      // a session from before this check: keep it, and start checking it
+    if (stored is! String) {
+      // a session from before this feature: keep it, and start checking it
       storePasswordHash(session, user, guard);
       return user;
     }
-    if (stored != passwordFingerprint(user, guard)) {
+    if (!_sameFingerprint(session, stored, user, guard)) {
       // the password changed after this login
       session.invalidate();
       return null;

@@ -94,6 +94,40 @@ class WebRouter extends Router {
         return 'changed';
       },
     ]);
+    // a user that is not logged in to this session
+    Route.post('keep-other-user', <dynamic>[
+      AuthMiddleware(),
+      (DoxRequest req) {
+        try {
+          Auth().updateSessionPasswordHash(req, users[1]!);
+          return 'kept';
+        } on ArgumentError catch (error) {
+          return '${error.message}';
+        }
+      },
+    ]);
+    // logoutOtherDevices with no AuthMiddleware, on the guard of the body
+    Route.post('logout-others-bare', (DoxRequest req) async {
+      try {
+        await Auth(guard: req.input('guard') as String?)
+            .logoutOtherDevices(req, 'secret');
+        return 'done';
+      } on UnAuthorizedException {
+        return 'unauthorized';
+      } on StateError {
+        return 'state error';
+      }
+    });
+    // log in user 3 on the web and web2 guards, with no password check
+    Route.post('login-both', (DoxRequest req) {
+      Auth().loginSession(req, users[3]!);
+      Auth(guard: 'web2').loginSession(req, users[3]!);
+      return 'in';
+    });
+    Route.get('me2', <dynamic>[
+      AuthMiddleware(guard: 'web2'),
+      (DoxRequest req) => req.auth?.user<FakeUser>()?.email,
+    ]);
     // a login from before this feature: the id only, no password hash
     Route.post('old-login', (DoxRequest req) {
       req.session.put(SessionAuthDriver.sessionKey('web'), 2);
@@ -180,6 +214,10 @@ void main() {
         defaultGuard: 'web',
         guards: <String, AuthGuard>{
           'web': AuthGuard(
+            driver: SessionAuthDriver(hashRounds: 4),
+            provider: AuthProvider(model: () => FakeUser()),
+          ),
+          'web2': AuthGuard(
             driver: SessionAuthDriver(hashRounds: 4),
             provider: AuthProvider(model: () => FakeUser()),
           ),
@@ -487,7 +525,14 @@ void main() {
 
     setUp(() {
       users[2] = FakeUser(2, 'b@dox.dev', Hash.make('secret', rounds: 4));
+      users[3] = FakeUser(3, 'c@dox.dev');
     });
+
+    Future<Session> sessionOf(Browser browser) {
+      return const SessionMiddleware().fromCookie(
+        browser.cookies['dox_session'],
+      );
+    }
 
     Future<Browser> loggedIn() async {
       Browser browser = Browser(client);
@@ -541,6 +586,9 @@ void main() {
     test('flag off: a password change keeps all sessions', () async {
       Browser phone = await loggedIn();
       Browser laptop = await loggedIn();
+      // login still writes the key, but nothing reads it
+      Session session = await sessionOf(phone);
+      expect(session.get(SessionAuthDriver.passwordHashKey('web')), isNotNull);
       await laptop.post('/change-password', <String, String>{
         'password': 'new',
       });
@@ -581,6 +629,79 @@ void main() {
       // the first check stores the hash, so a later change ends it
       users[2]!.password = Hash.make('new', rounds: 4);
       expect((await old.get('/me')).status, 401);
+    });
+
+    test('a save() stopped by a hook changes nothing', () async {
+      useFlags(const AuthFlags(endSessionsOnPasswordChange: true));
+      FakeUser.saveOk = false;
+      addTearDown(() => FakeUser.saveOk = true);
+      Browser phone = await loggedIn();
+      Browser laptop = await loggedIn();
+      String oldHash = users[2]!.password!;
+      Session before = await sessionOf(laptop);
+
+      TestResponse res = await laptop.post('/logout-others', <String, String>{
+        'password': 'secret',
+      });
+      expect(res.body, contains('could not save'));
+      expect(users[2]!.password, oldHash);
+      expect((await phone.get('/me')).body, 'b@dox.dev');
+      expect((await laptop.get('/me')).body, 'b@dox.dev');
+      Session after = await sessionOf(laptop);
+      String key = SessionAuthDriver.passwordHashKey('web');
+      expect(after.get(key), before.get(key));
+    });
+
+    test('flag on: setting a first password ends old sessions', () async {
+      useFlags(const AuthFlags(endSessionsOnPasswordChange: true));
+      Browser browser = Browser(client);
+      await browser.post('/login-both');
+      expect((await browser.get('/me')).body, 'c@dox.dev');
+      users[3]!.password = Hash.make('secret', rounds: 4);
+      expect((await browser.get('/me')).status, 401);
+    });
+
+    test('two guards keep separate keys', () async {
+      useFlags(const AuthFlags(endSessionsOnPasswordChange: true));
+      Browser browser = Browser(client);
+      await browser.post('/login-both');
+      Session session = await sessionOf(browser);
+      expect(session.get(SessionAuthDriver.passwordHashKey('web')), isNotNull);
+      expect(session.get(SessionAuthDriver.passwordHashKey('web2')), isNotNull);
+      // web2 ends on its own when its key is wrong
+      session.put(SessionAuthDriver.passwordHashKey('web2'), 'wrong');
+      expect(
+        await Auth(guard: 'web2').userFromSession<FakeUser>(session),
+        isNull,
+      );
+      Session fresh = await sessionOf(browser);
+      fresh.put(SessionAuthDriver.passwordHashKey('web2'), 'wrong');
+      expect(
+        (await Auth().userFromSession<FakeUser>(fresh))?.email,
+        'c@dox.dev',
+      );
+    });
+
+    test('logoutOtherDevices: a guest or a non-session guard throws', () async {
+      useFlags(const AuthFlags(endSessionsOnPasswordChange: true));
+      Browser guest = Browser(client);
+      expect((await guest.post('/logout-others-bare')).body, 'unauthorized');
+      Browser user = await loggedIn();
+      expect((await user.post('/logout-others-bare')).body, 'done');
+      expect(
+        (await user.post('/logout-others-bare', <String, String>{
+          'guard': 'api',
+        })).body,
+        'state error',
+      );
+    });
+
+    test('updateSessionPasswordHash refuses another user', () async {
+      Browser browser = await loggedIn();
+      expect(
+        (await browser.post('/keep-other-user')).body,
+        contains('not the user logged in'),
+      );
     });
   });
 

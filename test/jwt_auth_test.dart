@@ -39,9 +39,12 @@ class FakeUser extends Model<FakeUser> {
     return true;
   }
 
+  /// false makes save() act like a model hook stopped it
+  static bool saveOk = true;
+
   /// the user is already in [users], so there is nothing to save
   @override
-  Future<bool> save() async => true;
+  Future<bool> save() async => saveOk;
 
   @override
   Future<FakeUser?> find(dynamic arg1, [dynamic arg2]) async {
