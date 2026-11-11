@@ -95,6 +95,20 @@ class WebRouter extends Router {
         return 'changed';
       },
     ]);
+    // logoutOtherDevices when save() throws: is the old hash back?
+    Route.post('logout-others-throw', <dynamic>[
+      AuthMiddleware(),
+      (DoxRequest req) async {
+        FakeUser user = req.auth!.user<FakeUser>()!;
+        String? before = user.password;
+        try {
+          await (req.auth as Auth).logoutOtherDevices(req, 'secret');
+          return 'done';
+        } on StateError catch (error) {
+          return '${error.message} ${user.password == before}';
+        }
+      },
+    ]);
     // a user that is not logged in to this session
     Route.post('keep-other-user', <dynamic>[
       AuthMiddleware(),
@@ -155,8 +169,12 @@ class FreshUser extends FakeUser {
     return row == null ? null : FreshUser(row.id, row.email, row.password);
   }
 
+  /// true makes save() throw, like a database error
+  static bool saveThrows = false;
+
   @override
   Future<bool> save() async {
+    if (saveThrows) throw StateError('database is down');
     if (!FakeUser.saveOk) return false;
     users[id!] = FreshUser(id, email, password);
     return true;
@@ -677,6 +695,20 @@ void main() {
       Session after = await sessionOf(laptop);
       String key = SessionAuthDriver.passwordHashKey('web');
       expect(after.get(key), before.get(key));
+    });
+
+    test('a save() that throws puts the old hash back', () async {
+      useFlags(const AuthFlags(endSessionsOnPasswordChange: true));
+      FreshUser.saveThrows = true;
+      addTearDown(() => FreshUser.saveThrows = false);
+      Browser phone = await loggedIn();
+      Browser laptop = await loggedIn();
+      String oldHash = users[2]!.password!;
+      TestResponse res = await laptop.post('/logout-others-throw');
+      expect(res.body, 'database is down true');
+      expect(users[2]!.password, oldHash);
+      expect((await phone.get('/me')).body, 'b@dox.dev');
+      expect((await laptop.get('/me')).body, 'b@dox.dev');
     });
 
     test('flag on: setting a first password ends old sessions', () async {

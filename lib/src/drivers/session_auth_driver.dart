@@ -36,7 +36,8 @@ class SessionAuthDriver extends AuthDriver {
   /// The password hash of [user] as it is now, also after a change and
   /// `save()`, and also when the field is hidden from JSON. It reads the
   /// current fields first, and the loaded row only when the model has no
-  /// such field.
+  /// such field. The column must give the same value on every read: a
+  /// hook or cast that makes a new value each time ends every session.
   static dynamic currentPasswordHash(Model<dynamic> user, String guard) {
     String field = AuthEngine().guard(guard).provider.passwordField;
     Map<String, dynamic> current = user.toMap();

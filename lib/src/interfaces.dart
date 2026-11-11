@@ -62,10 +62,24 @@ class AuthFlags {
 
   /// A session login ends when the password of the user changes, like
   /// the Laravel `AuthenticateSession` middleware. The session keeps a
-  /// fingerprint of the password hash from the login. A session from
-  /// before this flag is not logged out. `Auth().logoutOtherDevices()`
-  /// needs this flag. A rehash on login (see `Auth.needsRehash`) changes
-  /// the hash too: call `Auth().updateSessionPasswordHash()` after it.
+  /// fingerprint of the password hash from the login. `Auth()
+  /// .logoutOtherDevices()` needs this flag. A rehash on login (see
+  /// `Auth.needsRehash`) changes the hash too: call
+  /// `Auth().updateSessionPasswordHash()` after it.
+  ///
+  /// A session made while the flag was off has no fingerprint. It is not
+  /// logged out: its first request with the flag on stores the current
+  /// one. So a password change before that first request does not end
+  /// it, and a session stolen before the flag was on can stay. To end
+  /// every old session once when you turn the flag on, change `APP_KEY`
+  /// and do not add the old key to `previousKeys` (both session drivers
+  /// then can not read the old cookie; other data made with the old key,
+  /// like encrypted values and JWTs, stops working too). With the
+  /// `cache` session driver, clearing the session store works too.
+  ///
+  /// The password column must give the same value on every read. A
+  /// hook or cast that makes a new value on each save or read (eg. one
+  /// that hashes again every time) ends every session.
   // NEXT MAJOR: make this the default, then remove the flag.
   final bool endSessionsOnPasswordChange;
 

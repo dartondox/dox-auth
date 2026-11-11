@@ -387,7 +387,10 @@ class Auth implements IAuth {
   }
 
   /// Keep [user] in the session, with no password check.
-  /// Needs a guard with `SessionAuthDriver`.
+  /// Needs a guard with `SessionAuthDriver`. With the
+  /// `endSessionsOnPasswordChange` flag, pass a fully loaded model: a
+  /// model from a `select()` with no password column looks like a user
+  /// with no password, and the session ends on the next request.
   void loginSession(DoxRequest req, Model<dynamic> user) {
     _sessionDriver.login(req, user, _guard);
     _userData = user;
@@ -402,15 +405,18 @@ class Auth implements IAuth {
   /// Log the user out of all other sessions, like Laravel
   /// `Auth::logoutOtherDevices`. It checks [password] against the
   /// current password, hashes it again and saves the user. The new
-  /// hash ends every other session of the user. This session stays
-  /// logged in.
+  /// hash ends every other session of the user that was made or used
+  /// while the flag was on. A session not used since the flag was turned
+  /// on is not ended (see `AuthFlags.endSessionsOnPasswordChange`). This
+  /// session stays logged in.
   /// - Needs a session guard and the `endSessionsOnPasswordChange` flag:
   ///   without the flag, other sessions do not check the password, so
   ///   it throws a `StateError` and changes nothing.
   /// - A wrong password, or no logged-in user, throws an
   ///   `UnAuthorizedException`.
   /// - A model hook that stops `save()` throws a `StateError`, and the
-  ///   session does not change.
+  ///   session does not change. When `save()` throws, the old hash is
+  ///   put back on the model and the error is thrown again.
   /// - It checks a password, so limit the route, eg. with a
   ///   `LoginThrottle`, like a login.
   /// ```
@@ -441,7 +447,14 @@ class Auth implements IAuth {
         "${user.runtimeType} can not set '$field'. Run build_runner again.",
       );
     }
-    if (!await user.save()) {
+    bool saved;
+    try {
+      saved = await user.save();
+    } catch (_) {
+      user.setColumnValue(field, hashed);
+      rethrow;
+    }
+    if (!saved) {
       user.setColumnValue(field, hashed);
       throw StateError(
         'logoutOtherDevices() could not save ${user.runtimeType}: a model '
@@ -455,6 +468,9 @@ class Auth implements IAuth {
   /// Keep the current session logged in after the app changed the
   /// password of [user]. Call it after `user.save()`. Only needed with
   /// the `endSessionsOnPasswordChange` flag. Needs a session guard.
+  /// Pass a fully loaded model: a model from a `select()` with no
+  /// password column looks like a user with no password, and the
+  /// session ends on the next request.
   /// [user] must be the user logged in to this session: another user
   /// throws an `ArgumentError`.
   /// ```
