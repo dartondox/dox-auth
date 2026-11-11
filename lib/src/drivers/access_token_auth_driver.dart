@@ -272,9 +272,11 @@ class AccessTokenAuthDriver extends AuthDriver {
   ///
   /// - [grace]: the old token works this much longer, so calls that are
   ///   on the way do not fail. Default: it ends now. An old token that
-  ///   ends sooner keeps its end. A larger [grace] gives a stolen old
-  ///   token more time to be used. It can not make new tokens: see the
-  ///   next point.
+  ///   ends sooner keeps its end. In the grace time the old token works
+  ///   on every route, also on routes that make tokens. Only a second
+  ///   rotate of it is refused (see the next point). So a larger
+  ///   [grace] gives a stolen old token more time to be used. Keep it
+  ///   short.
   /// - A token can be rotated only once. A second rotate of the same
   ///   old token (in the grace time or after) throws and makes nothing.
   ///   When two rotates run at the same time, one wins.

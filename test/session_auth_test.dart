@@ -4,6 +4,7 @@ import 'package:dox_core/dox_core.dart';
 import 'package:dox_core/testing.dart';
 import 'package:test/test.dart';
 
+import 'gate_http_test.dart' show useFlags;
 import 'jwt_auth_test.dart' show FakeUser, secret, users;
 
 class WebRouter extends Router {
@@ -73,6 +74,12 @@ String _whoAndGuard(DoxRequest req) {
   Auth auth = req.auth as Auth;
   return '${auth.user<FakeUser>()?.email} ${auth.guard}';
 }
+
+/// the headers of a JSON client and of an XHR client
+const List<Map<String, String>> _jsonHeaders = <Map<String, String>>[
+  <String, String>{'accept': 'application/json'},
+  <String, String>{'x-requested-with': 'XMLHttpRequest'},
+];
 
 /// keeps the cookies of every answer, like a browser
 class Browser {
@@ -230,6 +237,40 @@ void main() {
     TestResponse res = await client.get('/page');
     expect(res.status, 302);
     expect(res.header('location'), '/login');
+  });
+
+  test('redirectTo sends a JSON or XHR guest to the login page too', () async {
+    for (Map<String, String> headers in _jsonHeaders) {
+      TestResponse res = await client.get('/page', headers: headers);
+      expect(res.status, 302);
+      expect(res.header('location'), '/login');
+    }
+  });
+
+  test('with jsonNoRedirect on, a JSON or XHR guest gets 401', () async {
+    useFlags(const AuthFlags(jsonNoRedirect: true));
+    for (Map<String, String> headers in _jsonHeaders) {
+      expect((await client.get('/page', headers: headers)).status, 401);
+    }
+    // a page request and an Inertia request still get the redirect
+    TestResponse page = await client.get('/page');
+    expect(page.status, 302);
+    expect(page.header('location'), '/login');
+    TestResponse inertia = await client.get(
+      '/page',
+      headers: <String, String>{
+        'accept': 'application/json',
+        'x-inertia': 'true',
+      },
+    );
+    expect(inertia.status, 302);
+  });
+
+  test('AuthFlags.all turns on every flag', () {
+    expect(const AuthFlags().forbidGuest, isFalse);
+    expect(const AuthFlags().jsonNoRedirect, isFalse);
+    expect(const AuthFlags.all().forbidGuest, isTrue);
+    expect(const AuthFlags.all().jsonNoRedirect, isTrue);
   });
 
   test('optional auth lets a guest in and sets the user after login', () async {

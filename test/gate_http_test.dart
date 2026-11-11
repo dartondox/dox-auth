@@ -14,6 +14,20 @@ class Post {
   Post(this.id, this.userId);
 }
 
+/// Set [flags] on the auth config for one test. The old config comes
+/// back after the test, so no flag leaks into other tests.
+void useFlags(AuthFlags flags) {
+  AuthConfig old = AuthEngine().config;
+  Auth.initialize(
+    AuthConfig(
+      defaultGuard: old.defaultGuard,
+      guards: old.guards,
+      flags: flags,
+    ),
+  );
+  addTearDown(() => Auth.initialize(old));
+}
+
 final Map<int, Post> posts = <int, Post>{1: Post(1, 1), 2: Post(2, 2)};
 
 class PostPolicy extends Policy<FakeUser, Post> {
@@ -36,6 +50,11 @@ class GateRouter extends Router {
     AuthMiddleware auth = AuthMiddleware(guard: 'api');
     Route.get('admin', <dynamic>[
       auth,
+      const Can('admin'),
+      (DoxRequest r) => 'ok',
+    ]);
+    Route.get('admin-open', <dynamic>[
+      AuthMiddleware(guard: 'api', optional: true),
       const Can('admin'),
       (DoxRequest r) => 'ok',
     ]);
@@ -145,5 +164,27 @@ void main() {
 
   test('req.authorize gives 401 for a guest', () async {
     expect((await client.get('/guest-check')).status, 401);
+  });
+
+  test(
+    'with forbidGuest on, a guest gets 403 from Can and authorize',
+    () async {
+      expect((await client.get('/admin-open')).status, 401);
+      useFlags(const AuthFlags(forbidGuest: true));
+      expect((await client.get('/admin-open')).status, 403);
+      expect((await client.get('/guest-check')).status, 403);
+      // AuthMiddleware runs first and still gives a guest 401
+      expect((await client.get('/admin')).status, 401);
+      // a user and a guest gate do not change
+      expect((await as('b@dox.dev').get('/admin')).status, 403);
+      expect((await as('a@dox.dev').get('/admin')).status, 200);
+      expect((await client.get('/news')).status, 200);
+    },
+  );
+
+  test('forbidGuest is off again in the next test', () async {
+    expect(AuthEngine().flags.forbidGuest, isFalse);
+    expect((await client.get('/guest-check')).status, 401);
+    expect((await client.get('/admin-open')).status, 401);
   });
 }

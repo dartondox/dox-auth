@@ -50,7 +50,7 @@ class Auth implements IAuth {
   /// hash the password again on the next good login:
   /// ```
   /// if (Auth.needsRehash(user.password)) {
-  ///   user.password = Hash.make(password);
+  ///   user.password = await Hash.makeAsync(password);
   ///   await user.save();
   /// }
   /// ```

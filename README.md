@@ -234,7 +234,7 @@ Rotate (renew) a token:
 
 - The new token gets the user, name and abilities of the old token's row. `expiresIn: null` gives the driver `expiresIn` (no end when that is null too).
 - A token can be rotated only once. A second rotate of the same old token throws an `UnAuthorizedException` (a 401) and makes no token, also in the grace time. When two rotates of one token run at the same time, only one works.
-- `grace` is how long the old token still works, so requests that are on the way do not fail. Default: it ends now. A larger `grace` gives a stolen old token more time to be used. It can not make new tokens.
+- `grace` is how long the old token still works, so requests that are on the way do not fail. Default: it ends now. A larger `grace` gives a stolen old token more time to be used. In the grace time the old token works on every route, also on routes that make tokens. Only a second rotate of it is refused. So keep `grace` short.
 - A revoked or expired token throws an `UnAuthorizedException` too. A token of another guard, a negative `grace` or a token without its `user` throws an `ArgumentError`.
 - Each rotate gives a full new life. So a client that rotates again and again stays logged in forever. If you want a limit, check `token.createdAt` of the first login yourself, or set `expiresIn`.
 - `rotateAccessToken` needs the `rotated_at` column (see below). It runs in one transaction: when it fails, nothing is changed.
@@ -320,7 +320,7 @@ Old hashes keep their own cost, so they still work. Hash them again on the next 
 
 ```dart
 if (Auth.needsRehash(user.password)) {
-  user.password = Hash.make(password);
+  user.password = await Hash.makeAsync(password);
   await user.save();
 }
 ```
@@ -441,6 +441,24 @@ More:
 - `Gate.any` and `Gate.all` check a list of abilities.
 - A guest is denied, unless the user type is nullable, like `(User? user, Post post)`.
 - Gates and policies are kept per isolate. Dox runs many isolates, so register them in a `DoxProvider` `setup()`. It runs in every isolate.
+
+### Auth flags
+
+Some Laravel behaviors are opt-in. Turn them on with `flags:` in `AuthConfig`. All are off by default.
+
+```dart
+AuthConfig(
+  defaultGuard: 'web',
+  guards: guards,
+  flags: const AuthFlags(forbidGuest: true, jsonNoRedirect: true),
+);
+```
+
+- `forbidGuest`: `req.authorize()` and `Can` give a guest `403`, not `401`.
+- `jsonNoRedirect`: `AuthMiddleware(redirectTo: ...)` gives a JSON or XHR client a `401`, not a redirect. An Inertia request still gets the redirect.
+- `AuthFlags.all()` turns on every flag.
+
+The flags are part of `AuthConfig`, so `Auth.initialize` sets them in every isolate.
 
 ## Documentation
 

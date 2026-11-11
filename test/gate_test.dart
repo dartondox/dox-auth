@@ -58,6 +58,11 @@ void main() {
 
   setUp(Gate.flush);
 
+  test('the auth flags are off before Auth.initialize', () {
+    expect(AuthEngine().flags.forbidGuest, isFalse);
+    expect(AuthEngine().flags.jsonNoRedirect, isFalse);
+  });
+
   group('gates', () {
     test('a gate with a subject', () async {
       Gate.define('update-post', (User user, Post p) => p.userId == user.id);

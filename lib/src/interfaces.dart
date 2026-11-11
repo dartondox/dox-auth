@@ -29,10 +29,39 @@ class AuthConfig {
   final String defaultGuard;
   final Map<String, AuthGuard> guards;
 
+  /// Opt-in behaviors, like in Laravel. All are off by default.
+  /// ```
+  /// AuthConfig(defaultGuard: 'web', guards: guards, flags: AuthFlags.all());
+  /// ```
+  final AuthFlags flags;
+
   AuthConfig({
     required this.defaultGuard,
     this.guards = const <String, AuthGuard>{},
+    this.flags = const AuthFlags(),
   });
+}
+
+/// Opt-in behaviors of dox_auth. Each one works like Laravel. All are
+/// off by default. `AuthFlags.all()` turns all of them on.
+/// ```
+/// AuthFlags(forbidGuest: true)
+/// ```
+class AuthFlags {
+  /// `req.authorize()` and `Can` give a guest 403, not 401. The 403
+  /// has the message of the gate, like for a user who may not do it.
+  final bool forbidGuest;
+
+  /// `AuthMiddleware(redirectTo: ...)` gives a JSON or XHR client a
+  /// 401, not a redirect. A JSON client sends an `Accept` header with
+  /// json, a JSON body, or `X-Requested-With: XMLHttpRequest`. An
+  /// Inertia request still gets the redirect.
+  final bool jsonNoRedirect;
+
+  const AuthFlags({this.forbidGuest = false, this.jsonNoRedirect = false});
+
+  /// All flags on.
+  const AuthFlags.all() : forbidGuest = true, jsonNoRedirect = true;
 }
 
 /// A driver checks tokens and logins for a guard.
