@@ -219,6 +219,15 @@ await Auth(guard: 'api').revokeAccessToken(user, id);   // false when not a toke
 await Auth(guard: 'api').revokeAllAccessTokens(user);   // eg. after a password change
 await Auth(guard: 'api').revokeToken(req);              // logout: revoke the token of this request
 await Auth(guard: 'api').pruneExpiredAccessTokens();    // delete expired tokens, eg. from a scheduled job
+
+// renew: a new token, the old one works 2 more minutes
+AccessToken next = await auth.rotateAccessToken(
+  auth.currentAccessToken!,
+  grace: const Duration(minutes: 2),
+);
+
+// change what a token can do, eg. after a two-step code
+await auth.setAccessTokenAbilities(auth.currentAccessToken!, <String>['2fa']);
 ```
 
 In a route behind `AuthMiddleware`, `(req.auth as Auth).revokeToken(req)` uses the token that was already checked, so it does not check it again.
@@ -231,7 +240,7 @@ if (!auth.tokenCan('posts:write')) throw ForbiddenHttpException();
 auth.currentAccessToken; // the AccessToken of this request
 ```
 
-- A token fails (401) when its format is bad, the secret is wrong, it is expired, it was revoked (the row is deleted), its user is gone, it has another type, or it was made for a guard with another user table. A database error also fails the check, and it goes to `AppConfig.exceptionHandler`.
+- A token fails (401) when its format is bad, the secret is wrong, it is expired, it was revoked (the row is deleted), its user is gone, it has another type, or it was made for a guard with another user table. A database error also fails the check, and it goes to `AppConfig.exceptionHandler`. With `AccessTokenAuthDriver(throwOnError: true)` the database error is thrown, so the app can answer 503 and the client is not logged out.
 - `tokenable_type` is the table name of the user model. If you rename the users table, the old tokens stop working.
 - Each token has a `type`. By default it is the guard name. A token works only on a guard with the same type, so two access token guards do not take each other's tokens. If you rename a guard, set `AccessTokenAuthDriver(type: 'old-name')` to keep its tokens working.
 - Pass a user of the guard's model. For admins, use `Auth(guard: 'admin').createAccessToken(admin)`. A user of another model throws an `ArgumentError`.

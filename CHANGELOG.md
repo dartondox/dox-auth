@@ -1,5 +1,9 @@
 ## Unreleased
 
+- New `Auth().rotateAccessToken(token, grace:, name:, expiresIn:)`: a new access token in place of an old one, with the same user, name and abilities. The old token works for `grace` more (default: it ends now). Use it to renew a token before it expires. The driver method is `rotate(token, guard)`.
+- New `Auth().setAccessTokenAbilities(token, abilities)`: changes the abilities of a token, eg. to add `2fa` after a two-step code. The driver method is `setAbilities(token, abilities)`.
+- New, opt-in: `AccessTokenAuthDriver(throwOnError: true)`. A database error in a token check is thrown, not turned into a 401. So the app can answer 503, and a short database problem does not log the client out. The default does not change.
+- `AccessToken.abilities` and `AccessToken.expiresAt` are not `final` any more: the two new methods update them.
 - Fix: after `once()` or `attempt()` logged in another user, `revokeToken()` could still revoke the old access token of the request. `once()` and `attempt()` now drop that token too. `login()`, `setUser()` and `userFromToken()` do the same when the user changes.
 - Fix: `once()` and `attempt()` kept the access token of the request. After a login of another user, `tokenCan()` and `currentAccessToken` still used the old token. They now drop it.
 - Tests: `AuthMiddleware` with several guards checks which guard let the user in, and a bad bearer token with a good session. `once()` counts in the login throttle and leaves the session empty.

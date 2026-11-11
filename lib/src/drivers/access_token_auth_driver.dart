@@ -51,6 +51,12 @@ class AccessTokenAuthDriver extends AuthDriver {
   /// compared in lower case, like Postgres does.
   final bool uuidIds;
 
+  /// true: a database error in a token check is thrown, not turned into
+  /// "no user". So the app can answer 503, and a short database problem
+  /// does not look like a logout to the client. false (the default): the
+  /// error is reported and the check gives null (a 401).
+  final bool throwOnError;
+
   bool get _textIds => stringIds || uuidIds;
 
   AccessTokenAuthDriver({
@@ -61,6 +67,7 @@ class AccessTokenAuthDriver extends AuthDriver {
     this.hashRounds = 10,
     this.stringIds = false,
     this.uuidIds = false,
+    this.throwOnError = false,
   }) {
     AuthDriver.prepareDummyHash(hashRounds);
   }
@@ -110,6 +117,7 @@ class AccessTokenAuthDriver extends AuthDriver {
   /// format, a wrong secret, is expired, revoked, of another type or
   /// user table, or its user is gone. A database error also gives null
   /// (fail closed), and it is reported to `AppConfig.exceptionHandler`.
+  /// With [throwOnError], the database error is thrown.
   /// Only a failed `last_used_at` write is reported and then ignored, so
   /// a short write problem does not log users out.
   Future<AccessToken?> check(String token, String guard) async {
@@ -149,6 +157,7 @@ class AccessTokenAuthDriver extends AuthDriver {
       }
       return found;
     } catch (error, stackTrace) {
+      if (throwOnError) rethrow;
       AuthDriver.reportError(error, stackTrace);
       return null;
     }
@@ -191,6 +200,52 @@ class AccessTokenAuthDriver extends AuthDriver {
     token.user = user;
     token.value = '$prefix${token.id}.$secret';
     return token;
+  }
+
+  /// Change the abilities of [token], eg. add `2fa` after the user gave
+  /// a two-step code. The plain token stays the same.
+  Future<void> setAbilities(AccessToken token, List<String> abilities) async {
+    await _query.where('id', token.id).update(<String, dynamic>{
+      'abilities': jsonEncode(abilities),
+      'updated_at': DateTime.now().toUtc(),
+    });
+    token.abilities = List<String>.unmodifiable(abilities);
+  }
+
+  /// A new token in place of [token], for the same user, with the same
+  /// name and abilities. The old token works for [grace] more (default:
+  /// it ends now), so calls that are on the way do not fail. An old
+  /// token that ends sooner keeps its end. [token] must have its `user`:
+  /// use the token of a checked request, or of `createAccessToken`.
+  Future<AccessToken> rotate(
+    AccessToken token,
+    String guard, {
+    Duration grace = Duration.zero,
+    String? name,
+    Duration? expiresIn,
+  }) async {
+    Model<dynamic>? user = token.user;
+    if (user == null) {
+      throw ArgumentError('The token has no user. Use a checked token.');
+    }
+    AccessToken next = await create(
+      user,
+      guard,
+      name: name ?? token.name,
+      abilities: token.abilities,
+      expiresIn: expiresIn,
+    );
+    DateTime now = DateTime.now().toUtc();
+    DateTime end = now.add(grace);
+    DateTime? oldEnd = token.expiresAt;
+    if (oldEnd == null || end.isBefore(oldEnd)) {
+      await _query.where('id', token.id).update(<String, dynamic>{
+        'expires_at': end,
+        'updated_at': now,
+      });
+      token.expiresAt = end;
+    }
+    return next;
   }
 
   /// All tokens of [user] for [guard], newest first. Expired ones too.
@@ -340,9 +395,9 @@ class AccessToken {
   final String type;
   final String? name;
   final String _hash;
-  final List<String> abilities;
+  List<String> abilities;
   DateTime? lastUsedAt;
-  final DateTime? expiresAt;
+  DateTime? expiresAt;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 

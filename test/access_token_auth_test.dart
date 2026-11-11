@@ -872,6 +872,82 @@ void tests(String connection) {
     expect(() => Auth().login(alice), throwsStateError);
   });
 
+  test('setAccessTokenAbilities changes what the token can do', () async {
+    AccessToken token = await Auth().createAccessToken(
+      alice,
+      abilities: <String>[],
+    );
+    expect((await verify(token.value)).tokenCan('2fa'), isFalse);
+    await Auth().setAccessTokenAbilities(token, <String>['2fa']);
+    expect(token.can('2fa'), isTrue);
+    Auth auth = await verify(token.value);
+    expect(auth.tokenCan('2fa'), isTrue);
+    expect(auth.tokenCan('other'), isFalse);
+  });
+
+  test('rotateAccessToken: a new token, the old one ends', () async {
+    AccessToken old = await Auth().createAccessToken(
+      alice,
+      name: 'cli',
+      abilities: <String>['posts:read'],
+    );
+    AccessToken next = await Auth().rotateAccessToken(old);
+    expect(next.value, isNot(old.value));
+    expect(next.name, 'cli');
+    expect(next.abilities, <String>['posts:read']);
+    expect((await verify(next.value)).user<FakeUser>()?.email, alice.email);
+    expect((await verify(old.value)).isLoggedIn(), isFalse);
+  });
+
+  test('rotateAccessToken: the old token works for the grace time', () async {
+    AccessToken old = await Auth().createAccessToken(alice);
+    await Auth().rotateAccessToken(old, grace: const Duration(minutes: 2));
+    expect((await verify(old.value)).isLoggedIn(), isTrue);
+    AccessToken listed = (await Auth().accessTokens(alice)).last;
+    expect(
+      listed.expiresAt!
+          .difference(DateTime.now().toUtc().add(const Duration(minutes: 2)))
+          .abs(),
+      lessThan(const Duration(seconds: 5)),
+    );
+
+    // a second rotate with a longer grace keeps the earlier end
+    await Auth().rotateAccessToken(old, grace: const Duration(days: 1));
+    listed = (await Auth().accessTokens(alice)).last;
+    expect(
+      listed.expiresAt!.isBefore(
+        DateTime.now().toUtc().add(const Duration(minutes: 3)),
+      ),
+      isTrue,
+    );
+  });
+
+  test('rotateAccessToken needs a token with its user', () async {
+    await Auth().createAccessToken(alice);
+    AccessToken listed = (await Auth().accessTokens(alice)).single;
+    expect(() => Auth().rotateAccessToken(listed), throwsArgumentError);
+  });
+
+  test('throwOnError: a database error is thrown, not a logout', () async {
+    Auth.initialize(
+      AuthConfig(
+        defaultGuard: 'api',
+        guards: <String, AuthGuard>{
+          'api': AuthGuard(
+            driver: AccessTokenAuthDriver(
+              table: 'no_such_table',
+              connection: connection,
+              throwOnError: true,
+            ),
+            provider: AuthProvider(model: () => FakeUser()),
+          ),
+        },
+      ),
+    );
+    String fake = 'oat_1.${'A' * 43}';
+    await expectLater(verify(fake), throwsA(anything));
+  });
+
   test('a missing table fails closed', () async {
     Auth.initialize(
       AuthConfig(

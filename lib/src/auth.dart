@@ -139,6 +139,42 @@ class Auth implements IAuth {
     );
   }
 
+  /// A new access token in place of [token], with the same user, name
+  /// and abilities. The old one works for [grace] more (default: it
+  /// ends now). Use it to renew a token before it expires.
+  /// Needs `AccessTokenAuthDriver`.
+  /// ```
+  /// Auth auth = req.auth as Auth;
+  /// AccessToken next = await auth.rotateAccessToken(
+  ///   auth.currentAccessToken!,
+  ///   grace: Duration(minutes: 2),
+  /// );
+  /// return {'token': next.value};
+  /// ```
+  Future<AccessToken> rotateAccessToken(
+    AccessToken token, {
+    Duration grace = Duration.zero,
+    String? name,
+    Duration? expiresIn,
+  }) {
+    return _accessTokenDriver.rotate(
+      token,
+      _guard,
+      grace: grace,
+      name: name,
+      expiresIn: expiresIn,
+    );
+  }
+
+  /// Change the abilities of [token], eg. add `2fa` after a two-step
+  /// code. The plain token stays the same. Needs `AccessTokenAuthDriver`.
+  Future<void> setAccessTokenAbilities(
+    AccessToken token,
+    List<String> abilities,
+  ) {
+    return _accessTokenDriver.setAbilities(token, abilities);
+  }
+
   /// All access tokens of [user], newest first. Needs `AccessTokenAuthDriver`.
   Future<List<AccessToken>> accessTokens(Model<dynamic> user) {
     return _accessTokenDriver.all(user, _guard);
