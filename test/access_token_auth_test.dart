@@ -285,6 +285,9 @@ void tests(String connection) {
     await SqlQueryBuilder()
         .getDBDriver(connection)
         .execute('DELETE FROM $textTable');
+    await SqlQueryBuilder()
+        .getDBDriver(connection)
+        .execute('DELETE FROM $oldTable');
     users.clear();
     textUsers.clear();
     admins.clear();
@@ -1101,6 +1104,42 @@ void tests(String connection) {
     expect((await Auth().accessTokens(alice)).single.abilities, <String>['*']);
     expect(token.abilities, <String>['*']);
   });
+
+  /// Moves the row of [token] to another user by SQL. The old object
+  /// still has the old user.
+  Future<void> moveRow(AccessToken token, String column, String value) {
+    return SqlQueryBuilder()
+        .getDBDriver(connection)
+        .execute('UPDATE $table SET $column = $value WHERE id = ${token.id}');
+  }
+
+  test('setAbilities does not write a row that is not the token', () async {
+    for (String column in <String>['tokenable_id', 'type']) {
+      AccessToken token = await Auth().createAccessToken(alice);
+      await moveRow(token, column, column == 'type' ? "'other'" : '100');
+      await expectLater(
+        Auth().setAccessTokenAbilities(token, <String>['x']),
+        refused,
+      );
+      List<Map<String, dynamic>> data = await SqlQueryBuilder()
+          .getDBDriver(connection)
+          .query('SELECT abilities FROM $table WHERE id = ${token.id}');
+      expect('${data.single['abilities']}', contains('*'));
+      expect('${data.single['abilities']}', isNot(contains('x')));
+      expect(token.abilities, <String>['*']);
+    }
+  });
+
+  test(
+    'rotateAccessToken does not write a row that is not the token',
+    () async {
+      AccessToken token = await Auth().createAccessToken(alice);
+      await moveRow(token, 'tokenable_id', '100');
+      await expectLater(Auth().rotateAccessToken(token), refused);
+      expect(await rows(), 1);
+      expect(await rotated(), 0);
+    },
+  );
 
   test('rotateAccessToken refuses a token with another user', () async {
     AccessToken token = await Auth().createAccessToken(alice);
