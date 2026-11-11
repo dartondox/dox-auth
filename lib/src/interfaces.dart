@@ -60,10 +60,25 @@ class AuthFlags {
   // NEXT MAJOR: make this the default, then remove the flag.
   final bool jsonNoRedirect;
 
-  const AuthFlags({this.forbidGuest = false, this.jsonNoRedirect = false});
+  /// A session login ends when the password of the user changes, like
+  /// the Laravel `AuthenticateSession` middleware. The session keeps a
+  /// fingerprint of the password hash from the login. A session from
+  /// before this flag is not logged out. `Auth().logoutOtherDevices()`
+  /// needs this flag.
+  // NEXT MAJOR: make this the default, then remove the flag.
+  final bool endSessionsOnPasswordChange;
+
+  const AuthFlags({
+    this.forbidGuest = false,
+    this.jsonNoRedirect = false,
+    this.endSessionsOnPasswordChange = false,
+  });
 
   /// All flags on.
-  const AuthFlags.all() : forbidGuest = true, jsonNoRedirect = true;
+  const AuthFlags.all()
+    : forbidGuest = true,
+      jsonNoRedirect = true,
+      endSessionsOnPasswordChange = true;
 }
 
 /// A driver checks tokens and logins for a guard.

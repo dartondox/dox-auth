@@ -66,6 +66,39 @@ class WebRouter extends Router {
       return 'ok';
     });
     Route.get('note', (DoxRequest req) => req.session.get('note') ?? 'none');
+    Route.post('logout-others', <dynamic>[
+      AuthMiddleware(),
+      (DoxRequest req) async {
+        try {
+          await (req.auth as Auth).logoutOtherDevices(
+            req,
+            req.input('password') as String,
+          );
+          return 'done';
+        } on UnAuthorizedException catch (error) {
+          return '${error.message}';
+        } on StateError catch (error) {
+          return error.message;
+        }
+      },
+    ]);
+    // the app's own password change. `keep` keeps this session logged in.
+    Route.post('change-password', <dynamic>[
+      AuthMiddleware(),
+      (DoxRequest req) {
+        FakeUser user = req.auth!.user<FakeUser>()!;
+        user.password = Hash.make(req.input('password') as String, rounds: 4);
+        if (req.input('keep') == true) {
+          Auth().updateSessionPasswordHash(req, user);
+        }
+        return 'changed';
+      },
+    ]);
+    // a login from before this feature: the id only, no password hash
+    Route.post('old-login', (DoxRequest req) {
+      req.session.put(SessionAuthDriver.sessionKey('web'), 2);
+      return 'in';
+    });
     Route.get('jwt', (DoxRequest req) {
       Auth(guard: 'api').logout(req);
       return 'no';
@@ -295,6 +328,8 @@ void main() {
     expect(const AuthFlags().jsonNoRedirect, isFalse);
     expect(const AuthFlags.all().forbidGuest, isTrue);
     expect(const AuthFlags.all().jsonNoRedirect, isTrue);
+    expect(const AuthFlags().endSessionsOnPasswordChange, isFalse);
+    expect(const AuthFlags.all().endSessionsOnPasswordChange, isTrue);
   });
 
   test('optional auth lets a guest in and sets the user after login', () async {
@@ -442,6 +477,111 @@ void main() {
     expect((await browser.post('/once', wrong)).body, 'wrong');
     expect((await browser.post('/once', wrong)).body, 'wrong');
     expect((await browser.post('/once', wrong)).status, 429);
+  });
+
+  group('password change and logoutOtherDevices', () {
+    Map<String, dynamic> login = <String, dynamic>{
+      'email': 'b@dox.dev',
+      'password': 'secret',
+    };
+
+    setUp(() {
+      users[2] = FakeUser(2, 'b@dox.dev', Hash.make('secret', rounds: 4));
+    });
+
+    Future<Browser> loggedIn() async {
+      Browser browser = Browser(client);
+      expect((await browser.post('/login', login)).body, 'in');
+      return browser;
+    }
+
+    test('logoutOtherDevices ends other sessions, keeps this one', () async {
+      useFlags(const AuthFlags(endSessionsOnPasswordChange: true));
+      Browser phone = await loggedIn();
+      Browser laptop = await loggedIn();
+      String oldHash = users[2]!.password!;
+
+      TestResponse res = await laptop.post('/logout-others', <String, String>{
+        'password': 'secret',
+      });
+      expect(res.body, 'done');
+      expect(users[2]!.password, isNot(oldHash));
+      expect(Hash.verify('secret', users[2]!.password!), isTrue);
+
+      expect((await laptop.get('/me')).body, 'b@dox.dev');
+      expect((await phone.get('/me')).status, 401);
+      // the same password still logs in
+      expect((await phone.post('/login', login)).body, 'in');
+    });
+
+    test('logoutOtherDevices with a wrong password changes nothing', () async {
+      useFlags(const AuthFlags(endSessionsOnPasswordChange: true));
+      Browser phone = await loggedIn();
+      Browser laptop = await loggedIn();
+      String oldHash = users[2]!.password!;
+
+      TestResponse res = await laptop.post('/logout-others', <String, String>{
+        'password': 'nope',
+      });
+      expect(res.body, contains('does not match'));
+      expect(users[2]!.password, oldHash);
+      expect((await phone.get('/me')).body, 'b@dox.dev');
+    });
+
+    test('logoutOtherDevices needs the flag', () async {
+      Browser laptop = await loggedIn();
+      String oldHash = users[2]!.password!;
+      TestResponse res = await laptop.post('/logout-others', <String, String>{
+        'password': 'secret',
+      });
+      expect(res.body, contains('endSessionsOnPasswordChange'));
+      expect(users[2]!.password, oldHash);
+    });
+
+    test('flag off: a password change keeps all sessions', () async {
+      Browser phone = await loggedIn();
+      Browser laptop = await loggedIn();
+      await laptop.post('/change-password', <String, String>{
+        'password': 'new',
+      });
+      expect((await phone.get('/me')).body, 'b@dox.dev');
+      expect((await laptop.get('/me')).body, 'b@dox.dev');
+    });
+
+    test('flag on: a password change ends the sessions', () async {
+      useFlags(const AuthFlags.all());
+      Browser phone = await loggedIn();
+      Browser laptop = await loggedIn();
+      Browser tablet = await loggedIn();
+      await laptop.post('/change-password', <String, String>{
+        'password': 'new',
+      });
+      expect((await phone.get('/me')).status, 401);
+      expect((await laptop.get('/me')).status, 401);
+      expect((await tablet.get('/me')).status, 401);
+    });
+
+    test('flag on: updateSessionPasswordHash keeps this session', () async {
+      useFlags(const AuthFlags(endSessionsOnPasswordChange: true));
+      Browser phone = await loggedIn();
+      Browser laptop = await loggedIn();
+      await laptop.post('/change-password', <String, dynamic>{
+        'password': 'new',
+        'keep': true,
+      });
+      expect((await laptop.get('/me')).body, 'b@dox.dev');
+      expect((await phone.get('/me')).status, 401);
+    });
+
+    test('flag on: a session with no stored hash is kept', () async {
+      useFlags(const AuthFlags(endSessionsOnPasswordChange: true));
+      Browser old = Browser(client);
+      await old.post('/old-login');
+      expect((await old.get('/me')).body, 'b@dox.dev');
+      // the first check stores the hash, so a later change ends it
+      users[2]!.password = Hash.make('new', rounds: 4);
+      expect((await old.get('/me')).status, 401);
+    });
   });
 
   test('AuthMiddleware takes guard or guards, not both', () {

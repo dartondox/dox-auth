@@ -33,6 +33,17 @@ class FakeUser extends Model<FakeUser> {
   }
 
   @override
+  bool setColumnValue(String column, dynamic value) {
+    if (column != 'password' || value is! String) return false;
+    password = value;
+    return true;
+  }
+
+  /// the user is already in [users], so there is nothing to save
+  @override
+  Future<bool> save() async => true;
+
+  @override
   Future<FakeUser?> find(dynamic arg1, [dynamic arg2]) async {
     return users[arg1];
   }
