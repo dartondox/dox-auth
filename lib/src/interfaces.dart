@@ -50,12 +50,14 @@ class AuthConfig {
 class AuthFlags {
   /// `req.authorize()` and `Can` give a guest 403, not 401. The 403
   /// has the message of the gate, like for a user who may not do it.
+  // NEXT MAJOR: make this the default, then remove the flag.
   final bool forbidGuest;
 
   /// `AuthMiddleware(redirectTo: ...)` gives a JSON or XHR client a
   /// 401, not a redirect. A JSON client sends an `Accept` header with
   /// json, a JSON body, or `X-Requested-With: XMLHttpRequest`. An
   /// Inertia request still gets the redirect.
+  // NEXT MAJOR: make this the default, then remove the flag.
   final bool jsonNoRedirect;
 
   const AuthFlags({this.forbidGuest = false, this.jsonNoRedirect = false});
