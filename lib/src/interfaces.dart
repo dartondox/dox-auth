@@ -60,8 +60,8 @@ class AuthFlags {
   // NEXT MAJOR: make this the default, then remove the flag.
   final bool jsonNoRedirect;
 
-  /// A session login ends when the password of the user changes. The session keeps a
-  /// fingerprint of the password hash from the login. `Auth()
+  /// A session login ends when the password of the user changes. The session
+  /// keeps a fingerprint of the password hash from the login. `Auth()
   /// .logoutOtherDevices()` needs this flag. A rehash on login (see
   /// `Auth.needsRehash`) changes the hash too: call
   /// `Auth().updateSessionPasswordHash()` after it.
