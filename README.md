@@ -5,7 +5,7 @@ Login for Dox apps. It checks an email and a password. It gives back a JWT token
 [![pub package](https://img.shields.io/pub/v/dox_auth.svg)](https://pub.dev/packages/dox_auth)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/dartondox/dox-auth/blob/main/LICENSE)
 
-Part of [Dox](https://dartondox.dev), a web backend framework for Dart, like Laravel.
+Part of [Dox](https://dartondox.dev), a web backend framework for Dart.
 Source code: [github.com/dartondox/dox-auth](https://github.com/dartondox/dox-auth).
 
 ## Install
@@ -136,7 +136,7 @@ With the default `cookie` session driver, all session data sits in the cookie. S
 
 ### Access tokens
 
-Opaque API tokens that you can revoke at any time, like AdonisJS access tokens or Laravel Sanctum. It is opt-in: session and JWT guards do not change.
+Opaque API tokens that you can revoke at any time, like AdonisJS access tokens. It is opt-in: session and JWT guards do not change.
 
 A token looks like `oat_12.<secret>`. The table keeps only a SHA-256 hash of the secret. The plain token is shown once, when you make it. A token works until it expires or you revoke it.
 
@@ -444,7 +444,7 @@ More:
 
 ### Auth flags
 
-Some Laravel behaviors are opt-in. Turn them on with `flags:` in `AuthConfig`. All are off by default.
+Some behaviors are opt-in. Turn them on with `flags:` in `AuthConfig`. All are off by default.
 
 ```dart
 AuthConfig(
