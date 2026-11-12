@@ -8,7 +8,7 @@ import 'package:dox_core/dox_core.dart' hide Schema;
 import 'package:dox_orm/dox_orm.dart';
 
 /// Opaque access tokens kept in a database table, like AdonisJS access
-/// tokens or Laravel Sanctum. A token looks like `oat_12.<secret>`.
+/// tokens. A token looks like `oat_12.<secret>`.
 /// The table keeps only a SHA-256 hash of the secret. You see the plain
 /// token once, when you make it. A token works until it expires or you
 /// revoke it (the row is deleted).

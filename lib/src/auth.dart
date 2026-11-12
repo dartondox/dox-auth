@@ -255,7 +255,7 @@ class Auth implements IAuth {
     return _userData != null;
   }
 
-  /// The same as [isLoggedIn], with the Laravel name.
+  /// The same as [isLoggedIn].
   bool check() => isLoggedIn();
 
   @override
@@ -301,7 +301,7 @@ class Auth implements IAuth {
   }
 
   /// Check the credentials and log the user in for this `Auth` only.
-  /// true when they are right. Like Laravel `Auth::once`: it makes no
+  /// true when they are right. It makes no
   /// token and does not touch the session, so it works on any guard.
   /// [throttle] counts it like [attempt]. Use [attempt] for a token, or
   /// [attemptSession] to keep the login in the session.
@@ -402,8 +402,7 @@ class Auth implements IAuth {
     _sessionDriver.logout(req);
   }
 
-  /// Log the user out of all other sessions, like Laravel
-  /// `Auth::logoutOtherDevices`. It checks [password] against the
+  /// Log the user out of all other sessions. It checks [password] against the
   /// current password, hashes it again and saves the user. The new
   /// hash ends every other session of the user that was made or used
   /// while the flag was on. A session not used since the flag was turned

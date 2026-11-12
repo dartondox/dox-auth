@@ -29,7 +29,7 @@ class AuthConfig {
   final String defaultGuard;
   final Map<String, AuthGuard> guards;
 
-  /// Opt-in behaviors, like in Laravel. All are off by default.
+  /// Opt-in behaviors. All are off by default.
   /// ```
   /// AuthConfig(defaultGuard: 'web', guards: guards, flags: AuthFlags.all());
   /// ```
@@ -42,7 +42,7 @@ class AuthConfig {
   });
 }
 
-/// Opt-in behaviors of dox_auth. Each one works like Laravel. All are
+/// Opt-in behaviors of dox_auth. All are
 /// off by default. `AuthFlags.all()` turns all of them on.
 /// ```
 /// AuthFlags(forbidGuest: true)
@@ -60,8 +60,7 @@ class AuthFlags {
   // NEXT MAJOR: make this the default, then remove the flag.
   final bool jsonNoRedirect;
 
-  /// A session login ends when the password of the user changes, like
-  /// the Laravel `AuthenticateSession` middleware. The session keeps a
+  /// A session login ends when the password of the user changes. The session keeps a
   /// fingerprint of the password hash from the login. `Auth()
   /// .logoutOtherDevices()` needs this flag. A rehash on login (see
   /// `Auth.needsRehash`) changes the hash too: call

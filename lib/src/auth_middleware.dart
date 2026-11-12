@@ -11,7 +11,7 @@ class AuthMiddleware implements IDoxMiddleware {
   /// ```
   final String? guard;
 
-  /// Several guard names, tried in order, like Laravel `auth:web,api`.
+  /// Several guard names, tried in order.
   /// The first guard with a good login sets `req.auth`. Do not set
   /// [guard] too.
   /// ```
@@ -76,7 +76,7 @@ class AuthMiddleware implements IDoxMiddleware {
   }
 }
 
-/// Let only guests through, like the Laravel `guest` middleware. For
+/// Let only guests through. For
 /// login and register pages. A logged-in user goes to [redirectTo]
 /// (like `/dashboard`), or gets a 403 when it is null.
 /// ```
