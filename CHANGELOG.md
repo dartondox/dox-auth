@@ -1,6 +1,7 @@
 ## Unreleased
 
 - Ships an AI agent skill (dox-auth-guide). Install it in your app with `dart run skills@ get`.
+- Requires Dart 3.14 or newer.
 - New, opt-in: `AuthConfig(flags: AuthFlags(...))`. Each flag turns on one Laravel behavior. All are off by default, so nothing changes. `AuthFlags.all()` turns on every flag.
   - `forbidGuest`: `req.authorize()` and `Can` give a guest 403, not 401.
   - `jsonNoRedirect`: `AuthMiddleware(redirectTo: ...)` gives a JSON or XHR client a 401, not a redirect. An Inertia request still gets the redirect.
