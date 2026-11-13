@@ -4,9 +4,14 @@ library;
 
 import 'package:dox_core/command.dart';
 
+import 'src/commands/auth_install_command.dart';
 import 'src/commands/tokens_table_command.dart';
 
+export 'src/commands/auth_install_command.dart';
 export 'src/commands/tokens_table_command.dart';
 
 /// every command of this package
-final List<Command> commands = <Command>[TokensTableCommand()];
+final List<Command> commands = <Command>[
+  AuthInstallCommand(),
+  TokensTableCommand(),
+];
