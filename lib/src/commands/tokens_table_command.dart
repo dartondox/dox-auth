@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:dox_core/command.dart';
+import 'package:dox_annotation/command.dart';
 
 /// `dox auth:tokens-table`: write a migration that makes the access tokens
 /// table (`AccessTokenTables`).

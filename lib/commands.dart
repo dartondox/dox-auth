@@ -2,7 +2,7 @@
 /// the `dox: commands:` key in pubspec.yaml.
 library;
 
-import 'package:dox_core/command.dart';
+import 'package:dox_annotation/command.dart';
 
 import 'src/commands/tokens_table_command.dart';
 

@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Uses `package:dox_annotation/command.dart` (was `package:dox_core/command.dart`). Needs the dox_annotation release that has it.
 - Ships an AI agent skill (dox-auth-guide). Install it in your app with `dart run skills@ get`.
 - Requires Dart 3.14 or newer.
 - New, opt-in: `AuthConfig(flags: AuthFlags(...))`. Each flag turns on one Laravel behavior. All are off by default, so nothing changes. `AuthFlags.all()` turns on every flag.

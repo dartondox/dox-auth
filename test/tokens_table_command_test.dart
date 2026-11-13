@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:dox_auth/commands.dart';
-import 'package:dox_core/command.dart';
+import 'package:dox_annotation/command.dart';
 import 'package:test/test.dart';
 
 void main() {
