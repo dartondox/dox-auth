@@ -94,6 +94,20 @@ void main() {
     expect(snapshot(), before);
   });
 
+  test('an existing config skips the provider and the migration', () async {
+    File('${root.path}/lib/config/auth.dart')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('// mine\n');
+    await install(<String>[]);
+    expect(exitCode, 0);
+    expect(read('lib/config/auth.dart'), '// mine\n');
+    expect(
+      File('${root.path}/lib/providers/auth_provider.dart').existsSync(),
+      isFalse,
+    );
+    expect(Directory('${root.path}/db/migration').existsSync(), isFalse);
+  });
+
   test(
     'without the ORM it stops with exit code 1 and changes nothing',
     () async {

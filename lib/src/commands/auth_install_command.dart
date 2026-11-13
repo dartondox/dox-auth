@@ -48,16 +48,32 @@ class AuthInstallCommand extends Command {
     if (!File('${installer.root.path}/$userModel').existsSync()) {
       print(
         'There is no $userModel. Make the model first: '
-        '`dox make:model User -m`.',
+        '`dox make:model User -m`. If your User model is elsewhere, write '
+        'lib/config/auth.dart by hand (see the authentication docs).',
       );
       exitCode = 1;
       return;
     }
 
+    /// an app with its own config is set up already: change nothing else
+    bool hasConfig = File('${installer.root.path}/lib/config/auth.dart')
+        .existsSync();
+
     await installer.addDependency('dox_auth');
     await installer.addDependency('dox_builder', dev: true);
     await installer.addDependency('build_runner', dev: true);
 
+    if (hasConfig) {
+      installer.note('skipped  lib/config/auth.dart (already there)');
+      installer.note('skipped  provider and tokens migration');
+      installer.printSummary(<String>[
+        'lib/config/auth.dart is already there, so the provider and the '
+            'tokens migration were not added. Add them by hand if you need '
+            'them: `dox auth:tokens-table` makes the migration. See the '
+            'authentication docs.',
+      ]);
+      return;
+    }
     installer.writeFile('lib/config/auth.dart', authConfig(app));
     installer.writeFile('lib/providers/auth_provider.dart', authProvider(app));
     _addTokensMigration(installer);
