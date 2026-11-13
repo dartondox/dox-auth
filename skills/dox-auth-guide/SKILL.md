@@ -10,6 +10,17 @@ It also has gates and policies to say what a user may do.
 For routes, controllers, DTOs and providers basics, see the `dox-core-guide` skill.
 Long access token details are in `references/access-tokens.md`.
 
+## Set up
+
+An app with the ORM and a `User` model (`lib/app/models/user/user.model.dart`) sets up access token auth with one command:
+
+```bash
+dox add auth
+dox migrate
+```
+
+It writes `lib/config/auth.dart` (an `api` guard), `lib/providers/auth_provider.dart` and the access tokens migration. It never overwrites a file. Without the ORM it stops and tells you to run `dox add orm` first.
+
 ## Setup
 
 A new app does not have it. Add it:
