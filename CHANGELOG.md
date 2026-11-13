@@ -1,4 +1,4 @@
-## Unreleased
+## 3.2.0
 
 - New: `dox auth:install`, run by `dox add auth`. It writes `lib/config/auth.dart` (an `api` guard with access tokens), `lib/providers/auth_provider.dart` and the access tokens migration. It needs the ORM and the `User` model: without them it stops with exit code 1 and changes nothing. It never overwrites a file.
 - Ships an AI agent skill (dox-auth-guide). Install it in your app with `dart run skills@ get`.
