@@ -1,4 +1,5 @@
 // ignore_for_file: depend_on_referenced_packages
+import 'dart:math';
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,7 +8,14 @@ import 'package:dox_core/dox_core.dart';
 import 'package:dox_orm/dox_orm.dart';
 import 'package:test/test.dart';
 
-const String secret = '4HyiSrq4N5Nfg6bOadIhbFEI8zbUkpxt';
+/// A new key for each run. A fixed key in a public repo is a public key,
+/// and dox_core refuses public sample keys outside development and tests.
+final String _testKey = List<String>.generate(
+  32,
+  (int i) => Random.secure().nextInt(36).toRadixString(36),
+).join();
+
+final String secret = _testKey;
 
 /// the key that the driver signs with: made from [secret], see
 /// `JwtAuthDriver.signingKey`
