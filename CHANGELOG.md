@@ -1,3 +1,7 @@
+## Unreleased
+
+- Change: every log and warning line now starts with `[auth]` (was `[dox]`). Only the prefix changed.
+
 ## 3.2.0
 
 - New: `dox auth:install`, run by `dox add auth`. It writes `lib/config/auth.dart` (an `api` guard with access tokens), `lib/providers/auth_provider.dart` and the access tokens migration. It needs the ORM and the `User` model: without them it stops with exit code 1 and changes nothing. It never overwrites a file.

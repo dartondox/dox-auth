@@ -117,7 +117,7 @@ abstract class AuthDriver {
     try {
       Dox().config.exceptionHandler.report(error, stackTrace);
     } catch (_) {
-      stderr.writeln('[dox] dox_auth verifyToken failed: $error');
+      stderr.writeln('[auth] dox_auth verifyToken failed: $error');
       stderr.writeln(stackTrace);
     }
   }
