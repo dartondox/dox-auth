@@ -428,13 +428,13 @@ void main() {
       Env().env['APP_ENV'] = 'development';
       expect(
         () => JwtAuthDriver(secret: SecretKey('short')),
-        prints(contains('[dox] warning: The JWT secret is 5 bytes')),
+        prints(contains('[auth] warning: The JWT secret is 5 bytes')),
       );
       expect(() => JwtAuthDriver(secret: SecretKey(secret)), prints(isEmpty));
       Env().env['APP_ENV'] = 'testing';
       expect(
         () => JwtAuthDriver(secret: SecretKey('short')),
-        prints(contains('[dox] warning')),
+        prints(contains('[auth] warning')),
       );
       Env().env.remove('APP_ENV');
     });
@@ -686,7 +686,7 @@ void main() {
       late bool result;
       await expectLater(
         () async => result = await loggedIn(token),
-        prints(contains('[dox] warning: dox_auth can not read')),
+        prints(contains('[auth] warning: dox_auth can not read')),
       );
       expect(result, isTrue);
     });

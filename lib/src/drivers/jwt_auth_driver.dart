@@ -166,7 +166,7 @@ class JwtAuthDriver extends AuthDriver {
     if (!<String>['development', 'local', 'test', 'testing'].contains(env)) {
       throw ArgumentError(message, 'secret');
     }
-    print('[dox] warning: $message');
+    print('[auth] warning: $message');
   }
 
   static final RegExp _bearerPrefix = RegExp(r'^bearer ', caseSensitive: false);
@@ -313,7 +313,7 @@ class JwtAuthDriver extends AuthDriver {
       if (_warnedStoreDown) return <String, dynamic>{};
       _warnedStoreDown = true;
       print(
-        '[dox] warning: dox_auth can not read the revocation store '
+        '[auth] warning: dox_auth can not read the revocation store '
         '($error). Revoked tokens are accepted until it works again.',
       );
       return <String, dynamic>{};
