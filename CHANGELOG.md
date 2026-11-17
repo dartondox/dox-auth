@@ -1,4 +1,4 @@
-## Unreleased
+## 3.2.1
 
 - Change: every log and warning line now starts with `[auth]` (was `[dox]`). Only the prefix changed.
 
