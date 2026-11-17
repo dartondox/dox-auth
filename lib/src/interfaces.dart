@@ -171,7 +171,11 @@ abstract class AuthDriver {
         continue;
       }
       if (value is! String && value is! num) return null;
-      query.where(key, value);
+
+      /// a number goes in as text. `email = 0` makes MySQL turn every
+      /// email into a number, so almost any user matches. A number
+      /// column still matches the text, eg. `phone = '123'`.
+      query.where(key, value.toString());
       hasIdentifier = true;
     }
 
