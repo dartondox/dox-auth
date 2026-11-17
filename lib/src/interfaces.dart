@@ -185,7 +185,16 @@ abstract class AuthDriver {
     }
 
     /// get first record
-    Model<dynamic>? userData = await query.getFirst();
+    Model<dynamic>? userData;
+    try {
+      userData = await _getFirst(query);
+    } on PgServerException catch (error) {
+      /// a value that does not fit its column, like `abc` for a bigint.
+      /// Postgres gives a data error (class 22), MySQL and SQLite give no
+      /// row. It is a failed login, not a 500. Other errors still throw,
+      /// so a database outage does not look like a wrong password.
+      if (!error.code.startsWith('22')) rethrow;
+    }
 
     /// the stored hash. null when there is no user or no password.
     dynamic hashed = userData?.toMap(original: true)[provider.passwordField];
@@ -203,5 +212,19 @@ abstract class AuthDriver {
       return userData;
     }
     return null;
+  }
+
+  /// getFirst() in a savepoint on Postgres inside a transaction. There a
+  /// failed query aborts the whole transaction, so the next query of the
+  /// app would fail with 25P02. The savepoint rolls back only this query.
+  static Future<Model<dynamic>?> _getFirst(Model<dynamic> query) async {
+    if (!DBDriver.inTransaction ||
+        query.dbDriver.getName() != Driver.postgres) {
+      return await query.getFirst() as Model<dynamic>?;
+    }
+    return await QueryBuilder.transaction<dynamic>(
+      query.getFirst,
+      connection: query.connection,
+    ) as Model<dynamic>?;
   }
 }

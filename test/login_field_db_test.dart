@@ -140,4 +140,31 @@ void tests(String connection) {
     });
     expect(wrong, isNull);
   });
+
+  test('a value that does not fit a number column fails the login', () async {
+    for (Object value in <Object>['abc', 456.5, 1e21]) {
+      String? token = await Auth().attempt(<String, dynamic>{
+        'phone': value,
+        'password': 'secret',
+      });
+      expect(token, isNull, reason: 'phone: $value');
+    }
+  });
+
+  test('a bad value in a transaction does not break the transaction', () async {
+    await QueryBuilder.transaction<void>(() async {
+      String? token = await Auth().attempt(<String, dynamic>{
+        'phone': 'abc',
+        'password': 'secret',
+      });
+      expect(token, isNull);
+
+      /// the next query in the same transaction still works
+      String? good = await Auth().attempt(<String, dynamic>{
+        'phone': 456,
+        'password': 'secret',
+      });
+      expect(good, isNotNull);
+    }, connection: connection);
+  });
 }

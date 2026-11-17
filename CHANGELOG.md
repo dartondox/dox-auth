@@ -1,6 +1,7 @@
 ## Unreleased
 
 - Fix: a number in a login field (like `{"email": 0}`) now goes into the query as text. Before, MySQL turned every email into a number, so `email = 0` matched almost any user and the password was checked against the first one. A number column (like `phone`) still works.
+- Fix: on Postgres, a login value that does not fit a number column (like `{"phone": "abc"}` or `456.5` for a `bigint`) made the query fail, so the app answered 500. Now it is a failed login, like on MySQL and SQLite. Other database errors still throw. Inside a transaction the query runs in a savepoint, so the transaction stays usable.
 
 ## 3.2.1
 
