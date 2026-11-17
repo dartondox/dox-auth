@@ -1,3 +1,7 @@
+## Unreleased
+
+- Fix: a number in a login field (like `{"email": 0}`) now goes into the query as text. Before, MySQL turned every email into a number, so `email = 0` matched almost any user and the password was checked against the first one. A number column (like `phone`) still works.
+
 ## 3.2.1
 
 - Change: every log and warning line now starts with `[auth]` (was `[dox]`). Only the prefix changed.
