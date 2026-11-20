@@ -102,6 +102,15 @@ class Gate {
     _policies[M] = policy;
   }
 
+  /// true when the policy of [M] has [ability]. False when [M] has no
+  /// policy. A package that makes code for models (like dox_graphql) uses
+  /// it to skip a check that the app did not write.
+  /// ```
+  /// Gate.hasAbility<Post>('view');
+  /// ```
+  static bool hasAbility<M>(String ability) =>
+      _policies[M]?.has(ability) ?? false;
+
   /// Run [hook] before every check. A non-null answer decides at once.
   /// It runs only for users of type [U].
   /// ```
