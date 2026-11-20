@@ -172,6 +172,12 @@ void main() {
   group('policies', () {
     setUp(() => Gate.policy<Post>(PostPolicy()));
 
+    test('hasAbility reads the abilities of the policy', () {
+      expect(Gate.hasAbility<Post>('update'), isTrue);
+      expect(Gate.hasAbility<Post>('view'), isFalse);
+      expect(Gate.hasAbility<Comment>('update'), isFalse); // no policy
+    });
+
     test('a method with the model', () async {
       expect(await Gate.allows(ada, 'update', post), isTrue);
       expect(await Gate.allows(bob, 'update', post), isFalse);
