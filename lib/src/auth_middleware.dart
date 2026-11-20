@@ -3,7 +3,7 @@
 import 'package:dox_auth/dox_auth.dart';
 import 'package:dox_core/dox_core.dart';
 
-class AuthMiddleware implements IDoxMiddleware {
+class AuthMiddleware implements IAuthMiddleware {
   /// The guard name from `AuthConfig.guards`.
   /// null uses `AuthConfig.defaultGuard`.
   /// ```
@@ -49,6 +49,12 @@ class AuthMiddleware implements IDoxMiddleware {
       throw ArgumentError('Set guard or a non-empty guards list, not both.');
     }
   }
+
+  /// A copy with the same [guard] and [guards] that lets guests through
+  /// (see [optional]). [redirectTo] is not used.
+  @override
+  AuthMiddleware asOptional() =>
+      AuthMiddleware(guard: guard, guards: guards, optional: true);
 
   @override
   Future<dynamic> handle(IDoxRequest req) async {

@@ -1371,6 +1371,40 @@ void main() {
     });
   });
 
+  group('AuthMiddleware.asOptional |', () {
+    test('it is an IAuthMiddleware and keeps the guards', () {
+      AuthMiddleware strict = AuthMiddleware(
+        guards: <String>['web', 'api'],
+        redirectTo: '/login',
+      );
+      AuthMiddleware copy = strict.asOptional();
+      expect(strict, isA<IAuthMiddleware>());
+      expect(copy.guards, <String>['web', 'api']);
+      expect(copy.guard, isNull);
+      expect(copy.optional, isTrue);
+      expect(copy.redirectTo, isNull);
+      expect(AuthMiddleware(guard: 'api').asOptional().guard, 'api');
+    });
+
+    test('a guest goes on with no req.auth', () async {
+      FakeRequest req = FakeRequest();
+      expect(await AuthMiddleware().asOptional().handle(req), same(req));
+      expect(req.auth, isNull);
+    });
+
+    test('a good token sets req.auth', () async {
+      FakeRequest req = bearer(Auth().login(users[1]!)!);
+      await AuthMiddleware().asOptional().handle(req);
+      expect((req.auth! as Auth).id(), 1);
+    });
+
+    test('a bad token goes on as a guest', () async {
+      FakeRequest req = bearer('bad.token.here');
+      expect(await AuthMiddleware().asOptional().handle(req), same(req));
+      expect(req.auth, isNull);
+    });
+  });
+
   group('Optional AuthMiddleware |', () {
     test('a guest goes on with no req.auth', () async {
       FakeRequest req = FakeRequest();
