@@ -178,6 +178,22 @@ void main() {
       expect(Gate.hasAbility<Comment>('update'), isFalse); // no policy
     });
 
+    test('policyOf gives the policy, or null', () {
+      expect(Gate.policyOf<Post>(), isA<PostPolicy>());
+      expect(Gate.policyOf<Post>()!.abilities.keys, <String>[
+        'create',
+        'update',
+        'delete',
+      ]);
+      expect(Gate.policyOf<Comment>(), isNull);
+    });
+
+    test('isDefined is true only for a gate', () {
+      Gate.define('publish', (User user, _) => true);
+      expect(Gate.isDefined('publish'), isTrue);
+      expect(Gate.isDefined('update'), isFalse); // a policy ability
+    });
+
     test('a method with the model', () async {
       expect(await Gate.allows(ada, 'update', post), isTrue);
       expect(await Gate.allows(bob, 'update', post), isFalse);
