@@ -2,6 +2,7 @@ library;
 
 export 'package:dart_jsonwebtoken/dart_jsonwebtoken.dart';
 
+export 'src/ability.dart';
 export 'src/auth.dart';
 export 'src/auth_engine.dart';
 export 'src/auth_exception.dart';

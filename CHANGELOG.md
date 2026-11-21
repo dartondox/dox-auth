@@ -1,5 +1,7 @@
 ## Unreleased
 
+- New: `Ability` constants for the usual policy abilities: `Ability.viewAny`, `view`, `create`, `update` and `delete`. They are plain strings, so an editor can suggest them, like in `Gate.allows(user, Ability.update, post)`.
+
 - New: `Gate.hasAbility<M>(ability)` is true when the policy of `M` lists `ability`. dox_graphql uses it to know which checks a policy has.
 - New: `AuthMiddleware` implements `IAuthMiddleware` from dox_core. `asOptional()` gives a copy with the same `guard` and `guards` that lets guests through (`optional: true`). A package like dox_graphql uses it to read the user without blocking guests. This needs a dox_core that has `IAuthMiddleware`.
 - Fix: a number in a login field (like `{"email": 0}`) now goes into the query as text. Before, MySQL turned every email into a number, so `email = 0` matched almost any user and the password was checked against the first one. A number column (like `phone`) still works.
