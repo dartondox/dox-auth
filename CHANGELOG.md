@@ -1,4 +1,4 @@
-## Unreleased
+## 3.2.2
 
 - New: `Ability` constants for the usual policy abilities: `Ability.viewAny`, `view`, `create`, `update` and `delete`. They are plain strings, so an editor can suggest them, like in `Gate.allows(user, Ability.update, post)`.
 
