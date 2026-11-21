@@ -111,6 +111,23 @@ class Gate {
   static bool hasAbility<M>(String ability) =>
       _policies[M]?.has(ability) ?? false;
 
+  /// The policy of [M], or null when [M] has none. A package can read
+  /// its `abilities`, for example to check ability names when the app
+  /// starts.
+  /// ```
+  /// Gate.policyOf<Post>()?.abilities.keys; // (update, delete)
+  /// ```
+  static Policy<dynamic, M>? policyOf<M>() {
+    Policy<dynamic, dynamic>? policy = _policies[M];
+    return policy is Policy<dynamic, M> ? policy : null;
+  }
+
+  /// true when [ability] was added with [define].
+  /// ```
+  /// Gate.isDefined('update-post');
+  /// ```
+  static bool isDefined(String ability) => _gates.containsKey(ability);
+
   /// Run [hook] before every check. A non-null answer decides at once.
   /// It runs only for users of type [U].
   /// ```
